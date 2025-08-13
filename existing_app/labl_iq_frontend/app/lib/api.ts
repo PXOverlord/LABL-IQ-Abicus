@@ -61,6 +61,7 @@ export interface User {
   originZip?: string;
   defaultMarkup?: number;
   defaultSurcharge?: number;
+  weightConversion?: string;
 }
 
 export interface Analysis {
@@ -90,6 +91,8 @@ export interface ColumnMapping {
   height?: string;
   originZip?: string;
   destinationZip?: string;
+  rate?: string;
+  zone?: string;
   serviceLevel?: string;
 }
 
@@ -218,7 +221,9 @@ export const analysisAPI = {
       fuelSurcharge: number;
       markupPercent: number;
       serviceLevel: string;
-    }
+      originZip?: string;
+    },
+    columnMapping?: ColumnMapping
   ): Promise<any> => {
     const formData = new FormData();
     formData.append('file', file);
@@ -226,6 +231,14 @@ export const analysisAPI = {
     formData.append('fuel_surcharge', settings.fuelSurcharge.toString());
     formData.append('markup_percent', settings.markupPercent.toString());
     formData.append('service_level', settings.serviceLevel);
+    
+    if (settings.originZip) {
+      formData.append('origin_zip', settings.originZip);
+    }
+    
+    if (columnMapping) {
+      formData.append('column_mapping', JSON.stringify(columnMapping));
+    }
 
     const response = await api.post('/api/test-process', formData, {
       headers: {

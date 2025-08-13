@@ -3,324 +3,306 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Sidebar } from '../../components/layout/sidebar';
-import { FileUpload } from '../../components/dashboard/file-upload';
-import { ColumnMapping } from '../../components/dashboard/column-mapping';
-import { RateSettings } from '../../components/dashboard/rate-settings';
-import { Button } from '../../components/ui/button';
-import { useAnalysisStore } from '../../lib/stores/analysis-store';
-import { useProfilesStore } from '../../lib/stores/profiles-store';
-import { ColumnMapping as IColumnMapping } from '../../lib/api';
-import toast from 'react-hot-toast';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { 
+  Upload, 
+  BarChart3, 
+  FileText, 
+  Download, 
+  TrendingUp, 
+  Package, 
+  DollarSign, 
+  MapPin,
+  Plus,
+  Clock,
+  ArrowRight
+} from 'lucide-react';
+
+type AnalysisSummary = {
+  id: string;
+  fileName: string;
+  date: string;
+  shipmentCount: number;
+  totalValue: number;
+  avgRate: number;
+  zones: number[];
+};
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { 
-    startAnalysis, 
-    mapColumns, 
-    processAnalysis, 
-    isLoading, 
-    uploadProgress 
-  } = useAnalysisStore();
-  const { createProfile } = useProfilesStore();
-
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [analysisId, setAnalysisId] = useState<string>('');
-  const [columns, setColumns] = useState<string[]>([]);
-  const [columnMapping, setColumnMapping] = useState<IColumnMapping>({});
-  const [rateSettings, setRateSettings] = useState({
-    originZip: '',
-    markup: 0,
-    surcharge: 0,
-    fuelSurcharge: 16.0,
-    dasSurcharge: 1.98,
-    edasSurcharge: 3.92,
-    remoteSurcharge: 14.15,
-    dimDivisor: 139.0,
-    discountPercent: 0.0,
+  const [recentAnalyses, setRecentAnalyses] = useState<AnalysisSummary[]>([]);
+  const [stats, setStats] = useState({
+    totalAnalyses: 0,
+    totalShipments: 0,
+    totalValue: 0,
+    avgRate: 0
   });
-  const [currentStep, setCurrentStep] = useState<'upload' | 'mapping' | 'settings' | 'processing' | 'completed'>('upload');
 
+  // Mock data for now - in real app this would come from your backend
   useEffect(() => {
-    // For testing, skip authentication check
-    // In production, this should check authentication
-    console.log('Dashboard loaded - authentication bypassed for testing');
+    // Simulate loading recent analyses
+    const mockAnalyses: AnalysisSummary[] = [
+      {
+        id: '1',
+        fileName: 'Q4_Shipping_Data.csv',
+        date: '2025-08-11',
+        shipmentCount: 6920,
+        totalValue: 156420,
+        avgRate: 22.6,
+        zones: [1, 2, 3, 4, 5, 6, 7, 8]
+      },
+      {
+        id: '2',
+        fileName: 'August_Shipping.csv',
+        date: '2025-08-05',
+        shipmentCount: 5430,
+        totalValue: 123450,
+        avgRate: 22.7,
+        zones: [1, 2, 3, 4, 5]
+      }
+    ];
+    
+    setRecentAnalyses(mockAnalyses);
+    
+    // Calculate total stats
+    const totalShipments = mockAnalyses.reduce((sum, a) => sum + a.shipmentCount, 0);
+    const totalValue = mockAnalyses.reduce((sum, a) => sum + a.totalValue, 0);
+    const avgRate = totalValue / totalShipments;
+    
+    setStats({
+      totalAnalyses: mockAnalyses.length,
+      totalShipments,
+      totalValue,
+      avgRate: avgRate || 0
+    });
   }, []);
 
-  const handleFileSelect = async (file: File) => {
-    try {
-      setSelectedFile(file);
-      const id = await startAnalysis(file);
-      setAnalysisId(id);
-      
-      // Get columns from the analysis store
-      const currentAnalysis = useAnalysisStore.getState().currentAnalysis;
-      if (currentAnalysis?.results?.columns) {
-        setColumns(currentAnalysis.results.columns);
-      } else {
-        // Fallback to mock columns if backend doesn't return them
-        const mockColumns = [
-          'Weight', 'Length', 'Width', 'Height', 
-          'Origin ZIP', 'Destination ZIP', 'Service Level',
-          'Package ID', 'Date', 'Cost'
-        ];
-        setColumns(mockColumns);
-      }
-      
-      setCurrentStep('mapping');
-      toast.success('File uploaded successfully!');
-    } catch (error) {
-      toast.error('Failed to upload file');
-      console.error(error);
-    }
+  const handleNewAnalysis = () => {
+    router.push('/upload');
   };
 
-  const handleFileRemove = () => {
-    setSelectedFile(null);
-    setAnalysisId('');
-    setColumns([]);
-    setColumnMapping({});
-    setCurrentStep('upload');
+  const handleViewAnalysis = (analysisId: string) => {
+    // In real app, this would navigate to a specific analysis
+    router.push(`/analysis?id=${analysisId}`);
   };
 
-  const handleMappingChange = (mapping: IColumnMapping) => {
-    setColumnMapping(mapping);
-    if (isRequiredFieldsMapped(mapping)) {
-      setCurrentStep('settings');
-    }
+  const handleViewAllAnalyses = () => {
+    router.push('/analysis');
   };
-
-  const handleSaveProfile = async (name: string, description: string) => {
-    try {
-      await createProfile({
-        name,
-        description,
-        mapping: columnMapping,
-      });
-      toast.success('Profile saved successfully!');
-    } catch (error) {
-      toast.error('Failed to save profile');
-      console.error(error);
-    }
-  };
-
-  const handleRunAnalysis = async () => {
-    if (!analysisId) {
-      toast.error('Please upload a file first');
-      return;
-    }
-    
-    if (!rateSettings.originZip) {
-      toast.error('Please set your origin ZIP code in Settings');
-      return;
-    }
-
-    try {
-      setCurrentStep('processing');
-      
-      // Map columns first
-      await mapColumns(analysisId, columnMapping);
-      
-      // Start processing
-      await processAnalysis(analysisId, rateSettings);
-      
-      toast.success('Analysis completed! Check the results below.');
-      
-      // Stay on dashboard and show results
-      setCurrentStep('completed');
-    } catch (error) {
-      toast.error('Failed to start analysis');
-      console.error(error);
-      setCurrentStep('settings');
-    }
-  };
-
-  const isRequiredFieldsMapped = (mapping: IColumnMapping): boolean => {
-    return Boolean(mapping.weight && mapping.destinationZip);
-  };
-
-  const canRunAnalysis = Boolean(
-    selectedFile && 
-    isRequiredFieldsMapped(columnMapping) && 
-    currentStep !== 'processing'
-  );
-
-
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto p-6">
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-            <p className="text-gray-600">
-              Upload your shipping data and analyze rates across carriers to find optimization opportunities.
-            </p>
-          </div>
+    <div className="p-6 space-y-6">
+      {/* Welcome Header */}
+      <div className="text-center space-y-2">
+        <h1 className="text-3xl font-bold text-gray-900">Welcome to Labl IQ</h1>
+        <p className="text-lg text-gray-600">Shipping Intelligence Platform</p>
+        <p className="text-sm text-gray-500">Analyze, optimize, and manage your shipping operations</p>
+      </div>
 
-          {/* Progress Steps */}
-          <div className="mb-8">
-            <div className="flex items-center space-x-4">
-              <div className={`flex items-center ${currentStep !== 'upload' ? 'text-green-600' : 'text-primary'}`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                  currentStep !== 'upload' ? 'bg-green-100' : 'bg-primary text-white'
-                }`}>
-                  1
-                </div>
-                <span className="ml-2 text-sm font-medium">Upload File</span>
-              </div>
-              
-              <div className={`w-8 h-0.5 ${currentStep === 'mapping' || currentStep === 'settings' || currentStep === 'processing' ? 'bg-green-500' : 'bg-gray-300'}`} />
-              
-              <div className={`flex items-center ${
-                currentStep === 'mapping' ? 'text-primary' : 
-                currentStep === 'settings' || currentStep === 'processing' ? 'text-green-600' : 'text-gray-400'
-              }`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                  currentStep === 'mapping' ? 'bg-primary text-white' :
-                  currentStep === 'settings' || currentStep === 'processing' ? 'bg-green-100' : 'bg-gray-200'
-                }`}>
-                  2
-                </div>
-                <span className="ml-2 text-sm font-medium">Map Columns</span>
-              </div>
-              
-              <div className={`w-8 h-0.5 ${currentStep === 'settings' || currentStep === 'processing' ? 'bg-green-500' : 'bg-gray-300'}`} />
-              
-              <div className={`flex items-center ${
-                currentStep === 'settings' ? 'text-primary' :
-                currentStep === 'processing' ? 'text-green-600' : 'text-gray-400'
-              }`}>
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                  currentStep === 'settings' ? 'bg-primary text-white' :
-                  currentStep === 'processing' ? 'bg-green-100' : 'bg-gray-200'
-                }`}>
-                  3
-                </div>
-                <span className="ml-2 text-sm font-medium">Configure & Run</span>
+      {/* Quick Actions */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={handleNewAnalysis}>
+          <CardContent className="p-6 text-center">
+            <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Plus className="h-8 w-8 text-blue-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">New Analysis</h3>
+            <p className="text-sm text-gray-600 mb-4">Upload new shipping data and run analysis</p>
+            <Button className="w-full bg-black text-white hover:bg-gray-800">
+              Start Analysis
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="hover:shadow-lg transition-shadow cursor-pointer" onClick={handleViewAllAnalyses}>
+          <CardContent className="p-6 text-center">
+            <div className="bg-green-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <BarChart3 className="h-8 w-8 text-green-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">View Analyses</h3>
+            <p className="text-sm text-gray-600 mb-4">Browse all your previous analyses and results</p>
+            <Button variant="outline" className="w-full">
+              Browse Results
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </CardContent>
+        </Card>
+
+        <Card className="hover:shadow-lg transition-shadow">
+          <CardContent className="p-6 text-center">
+            <div className="bg-purple-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FileText className="h-8 w-8 text-purple-600" />
+            </div>
+            <h3 className="text-lg font-semibold mb-2">Reports</h3>
+            <p className="text-sm text-gray-600 mb-4">Generate detailed reports and insights</p>
+            <Button variant="outline" className="w-full">
+              Generate Reports
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Stats Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <BarChart3 className="h-5 w-5 text-blue-500" />
+              <div>
+                <p className="text-sm text-gray-600">Total Analyses</p>
+                <p className="text-2xl font-bold">{stats.totalAnalyses}</p>
               </div>
             </div>
-          </div>
-
-          {/* Main Content */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* File Upload */}
-            <div className="lg:col-span-1">
-              <FileUpload
-                onFileSelect={handleFileSelect}
-                onFileRemove={handleFileRemove}
-                selectedFile={selectedFile}
-                uploadProgress={uploadProgress}
-                isUploading={isLoading && currentStep === 'upload'}
-              />
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <Package className="h-5 w-5 text-green-500" />
+              <div>
+                <p className="text-sm text-gray-600">Total Shipments</p>
+                <p className="text-2xl font-bold">{stats.totalShipments.toLocaleString()}</p>
+              </div>
             </div>
-
-            {/* Column Mapping */}
-            {columns.length > 0 && (
-              <div className="lg:col-span-2">
-                <ColumnMapping
-                  columns={columns}
-                  mapping={columnMapping}
-                  onMappingChange={handleMappingChange}
-                  onSaveProfile={handleSaveProfile}
-                />
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <DollarSign className="h-5 w-5 text-purple-500" />
+              <div>
+                <p className="text-sm text-gray-600">Total Value</p>
+                <p className="text-2xl font-bold">${stats.totalValue.toLocaleString()}</p>
               </div>
-            )}
-
-            {/* Rate Settings */}
-            {(currentStep === 'settings' || currentStep === 'processing') && (
-              <div className="lg:col-span-1">
-                <RateSettings
-                  settings={rateSettings}
-                  onSettingsChange={setRateSettings}
-                  onRunAnalysis={handleRunAnalysis}
-                  canRunAnalysis={canRunAnalysis}
-                  isRunning={currentStep === 'processing'}
-                  savedOriginZip="90210" // This would come from user settings in production
-                />
+            </div>
+          </CardContent>
+        </Card>
+        
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center space-x-2">
+              <TrendingUp className="h-5 w-5 text-orange-500" />
+              <div>
+                <p className="text-sm text-gray-600">Avg Rate</p>
+                <p className="text-2xl font-bold">${stats.avgRate.toFixed(2)}</p>
               </div>
-            )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Recent Analyses */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center space-x-2">
+              <Clock className="h-5 w-5" />
+              <span>Recent Analyses</span>
+            </CardTitle>
+            <Button variant="outline" onClick={handleViewAllAnalyses}>
+              View All
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
           </div>
-
-          {/* Processing Status */}
-          {currentStep === 'processing' && (
-            <div className="mt-8 p-6 bg-blue-50 rounded-lg">
-              <div className="flex items-center space-x-3">
-                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                <div>
-                  <h3 className="text-lg font-medium text-blue-900">
-                    Analysis in Progress
-                  </h3>
-                  <p className="text-blue-700">
-                    We're analyzing your shipping data across multiple carriers. This typically takes 2-5 minutes.
-                  </p>
+        </CardHeader>
+        <CardContent>
+          {recentAnalyses.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Package className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+              <p>No analyses yet. Start your first analysis!</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {recentAnalyses.map((analysis) => (
+                <div 
+                  key={analysis.id}
+                  className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer"
+                  onClick={() => handleViewAnalysis(analysis.id)}
+                >
+                  <div className="flex items-center space-x-4">
+                    <div className="bg-blue-100 w-10 h-10 rounded-full flex items-center justify-center">
+                      <FileText className="h-5 w-5 text-blue-600" />
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-gray-900">{analysis.fileName}</h4>
+                      <div className="flex items-center space-x-4 text-sm text-gray-500">
+                        <span>{analysis.date}</span>
+                        <span>•</span>
+                        <span>{analysis.shipmentCount.toLocaleString()} shipments</span>
+                        <span>•</span>
+                        <span>${analysis.avgRate.toFixed(2)} avg rate</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center space-x-4">
+                    <div className="text-right">
+                      <p className="font-medium text-gray-900">${analysis.totalValue.toLocaleString()}</p>
+                      <p className="text-sm text-gray-500">Total value</p>
+                    </div>
+                    <div className="flex space-x-1">
+                      {analysis.zones.slice(0, 3).map(zone => (
+                        <Badge key={zone} variant="secondary" className="text-xs">
+                          Z{zone}
+                        </Badge>
+                      ))}
+                      {analysis.zones.length > 3 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{analysis.zones.length - 3}
+                        </Badge>
+                      )}
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-gray-400" />
+                  </div>
                 </div>
-              </div>
+              ))}
             </div>
           )}
+        </CardContent>
+      </Card>
 
-          {/* Results Display */}
-          {currentStep === 'completed' && (
-            <div className="mt-8 p-6 bg-green-50 rounded-lg">
-              <div className="space-y-4">
-                <div className="flex items-center space-x-3">
-                  <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-medium text-green-900">
-                      Analysis Completed Successfully!
-                    </h3>
-                    <p className="text-green-700">
-                      Your shipping data has been analyzed across multiple carriers.
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-                  <div className="bg-white p-4 rounded-lg border">
-                    <div className="text-2xl font-bold text-green-600">
-                      ${useAnalysisStore.getState().currentAnalysis?.results?.summary?.totalSavings?.toFixed(2) || '0.00'}
-                    </div>
-                    <div className="text-sm text-gray-600">Total Potential Savings</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg border">
-                    <div className="text-2xl font-bold text-blue-600">
-                      {useAnalysisStore.getState().currentAnalysis?.results?.summary?.totalShipments || 0}
-                    </div>
-                    <div className="text-sm text-gray-600">Shipments Analyzed</div>
-                  </div>
-                  <div className="bg-white p-4 rounded-lg border">
-                    <div className="text-2xl font-bold text-purple-600">
-                      ${useAnalysisStore.getState().currentAnalysis?.results?.summary?.averageSavings?.toFixed(2) || '0.00'}
-                    </div>
-                    <div className="text-sm text-gray-600">Average Savings per Shipment</div>
-                  </div>
-                </div>
-                
-                <div className="flex space-x-3 mt-4">
-                  <Button 
-                    onClick={() => setCurrentStep('upload')}
-                    variant="outline"
-                  >
-                    Start New Analysis
-                  </Button>
-                  <Button 
-                    onClick={() => window.open('/test', '_blank')}
-                    variant="outline"
-                  >
-                    Test Backend Connection
-                  </Button>
-                </div>
+      {/* Getting Started Guide */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <MapPin className="h-5 w-5" />
+            <span>Getting Started</span>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="text-center">
+              <div className="bg-blue-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-blue-600 font-bold text-lg">1</span>
               </div>
+              <h4 className="font-medium mb-2">Upload Your Data</h4>
+              <p className="text-sm text-gray-600">Upload CSV files with shipping data including weights, rates, and zones</p>
             </div>
-          )}
-        </div>
-      </main>
+            
+            <div className="text-center">
+              <div className="bg-green-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-green-600 font-bold text-lg">2</span>
+              </div>
+              <h4 className="font-medium mb-2">Map Your Columns</h4>
+              <p className="text-sm text-gray-600">Tell us which columns contain weight, rates, zones, and other data</p>
+            </div>
+            
+            <div className="text-center">
+              <div className="bg-purple-100 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="text-purple-600 font-bold text-lg">3</span>
+              </div>
+              <h4 className="font-medium mb-2">Analyze & Optimize</h4>
+              <p className="text-sm text-gray-600">Get insights, identify patterns, and optimize your shipping costs</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

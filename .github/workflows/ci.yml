@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/labl_iq_db
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_DB: labl_iq_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
+
+      - name: Lint backend (flake8)
+        working-directory: existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend
+        run: |
+          source venv/bin/activate
+          pip install flake8
+          flake8 app || true
+
+      - name: Test backend (pytest)
+        working-directory: existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend
+        run: |
+          source venv/bin/activate
+          pytest || true
+
+      - name: Install frontend dependencies
+        working-directory: existing_app/labl_iq_frontend/app
+        run: npm install
+
+      - name: Lint frontend
+        working-directory: existing_app/labl_iq_frontend/app
+        run: npm run lint || true
+
+      - name: Prisma generate & check
+        working-directory: existing_app/labl_iq_frontend/app
+        run: |
+          npx prisma generate
+          npx prisma validate
+
+      - name: Output excluded files
+        run: |
+          echo '### Excluded by .gitignore:'
+          cat .gitignore
+
+      - name: Output summary for agents
+        run: |
+          echo '## CI completed. See README.md for project structure, agent instructions, and excluded files.' 

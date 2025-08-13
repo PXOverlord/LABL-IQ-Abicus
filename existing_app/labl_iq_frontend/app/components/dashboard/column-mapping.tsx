@@ -23,6 +23,8 @@ const requiredFields = [
   { key: 'width', label: 'Width', required: false },
   { key: 'height', label: 'Height', required: false },
   { key: 'destinationZip', label: 'Destination ZIP', required: true },
+  { key: 'rate', label: 'Current Rate/Cost', required: true },
+  { key: 'zone', label: 'Zone (optional)', required: false },
   { key: 'serviceLevel', label: 'Service Level', required: false },
 ];
 
@@ -49,47 +51,93 @@ export function ColumnMapping({
       const lowerColumn = column.toLowerCase();
       const cleanColumn = lowerColumn.replace(/[^a-z0-9]/g, ''); // Remove special characters
       
-      // Weight mappings
+      // Weight mappings - more comprehensive
       if (lowerColumn.includes('weight') || lowerColumn.includes('wt') || 
           lowerColumn.includes('lbs') || lowerColumn.includes('pound') ||
+          lowerColumn.includes('mass') || lowerColumn.includes('package weight') ||
+          lowerColumn.includes('pkg wt') || lowerColumn.includes('shipping weight') ||
+          lowerColumn.includes('package wt') || lowerColumn.includes('item weight') ||
+          lowerColumn.includes('product weight') || lowerColumn.includes('goods weight') ||
           cleanColumn.includes('weight') || cleanColumn.includes('wt')) {
         autoMapping.weight = column;
       }
       
-      // Length mappings
+      // Length mappings - more comprehensive
       if (lowerColumn.includes('length') || lowerColumn.includes('len') || 
-          lowerColumn.includes('l ') || cleanColumn.includes('length') ||
+          lowerColumn.includes('l ') || lowerColumn.includes('long') ||
+          lowerColumn.includes('package length') || lowerColumn.includes('pkg length') ||
+          lowerColumn.includes('item length') || lowerColumn.includes('product length') ||
+          cleanColumn.includes('length') || cleanColumn.includes('len') ||
           (lowerColumn.includes('l') && lowerColumn.length <= 3)) {
         autoMapping.length = column;
       }
       
-      // Width mappings
+      // Width mappings - more comprehensive
       if (lowerColumn.includes('width') || lowerColumn.includes('w ') || 
-          cleanColumn.includes('width') ||
+          lowerColumn.includes('wide') || lowerColumn.includes('package width') ||
+          lowerColumn.includes('pkg width') || lowerColumn.includes('item width') ||
+          lowerColumn.includes('product width') ||
+          cleanColumn.includes('width') || cleanColumn.includes('wid') ||
           (lowerColumn.includes('w') && lowerColumn.length <= 3)) {
         autoMapping.width = column;
       }
       
-      // Height mappings
+      // Height mappings - more comprehensive
       if (lowerColumn.includes('height') || lowerColumn.includes('ht') || 
-          lowerColumn.includes('h ') || cleanColumn.includes('height') ||
+          lowerColumn.includes('h ') || lowerColumn.includes('high') ||
+          lowerColumn.includes('package height') || lowerColumn.includes('pkg height') ||
+          lowerColumn.includes('item height') || lowerColumn.includes('product height') ||
+          cleanColumn.includes('height') || cleanColumn.includes('ht') ||
           (lowerColumn.includes('h') && lowerColumn.length <= 3)) {
         autoMapping.height = column;
       }
       
-      // Destination ZIP mappings
+      // Destination ZIP mappings - more comprehensive
       if ((lowerColumn.includes('dest') || lowerColumn.includes('to') || lowerColumn.includes('ship')) && 
           (lowerColumn.includes('zip') || lowerColumn.includes('postal') || lowerColumn.includes('code'))) {
         autoMapping.destinationZip = column;
       } else if ((lowerColumn.includes('zip') || lowerColumn.includes('postal') || lowerColumn.includes('code')) && 
-                 !lowerColumn.includes('origin') && !lowerColumn.includes('from')) {
+                 !lowerColumn.includes('origin') && !lowerColumn.includes('from') && !lowerColumn.includes('ship from')) {
+        autoMapping.destinationZip = column;
+      } else if (lowerColumn.includes('destination') || lowerColumn.includes('to address') || 
+                 lowerColumn.includes('ship to') || lowerColumn.includes('delivery') ||
+                 lowerColumn.includes('recipient') || lowerColumn.includes('customer') ||
+                 lowerColumn.includes('end') || lowerColumn.includes('final')) {
         autoMapping.destinationZip = column;
       }
       
-      // Service Level mappings
+      // Rate/Cost mappings - more comprehensive
+      if (lowerColumn.includes('rate') || lowerColumn.includes('cost') || 
+          lowerColumn.includes('price') || lowerColumn.includes('amount') ||
+          lowerColumn.includes('charge') || lowerColumn.includes('fee') ||
+          lowerColumn.includes('total') || lowerColumn.includes('shipping cost') ||
+          lowerColumn.includes('shipping rate') || lowerColumn.includes('freight cost') ||
+          lowerColumn.includes('freight rate') || lowerColumn.includes('transport cost') ||
+          lowerColumn.includes('transport rate') || lowerColumn.includes('delivery cost') ||
+          lowerColumn.includes('delivery rate') || lowerColumn.includes('postage') ||
+          lowerColumn.includes('current') || lowerColumn.includes('existing') ||
+          lowerColumn.includes('actual') || lowerColumn.includes('paid') ||
+          cleanColumn.includes('rate') || cleanColumn.includes('cost') ||
+          cleanColumn.includes('price') || cleanColumn.includes('amount')) {
+        autoMapping.rate = column;
+      }
+      
+      // Zone mappings - more comprehensive
+      if (lowerColumn.includes('zone') || lowerColumn.includes('shipping zone') ||
+          lowerColumn.includes('freight zone') || lowerColumn.includes('transport zone') ||
+          lowerColumn.includes('delivery zone') || lowerColumn.includes('rate zone') ||
+          lowerColumn.includes('service zone') || lowerColumn.includes('carrier zone') ||
+          cleanColumn.includes('zone')) {
+        autoMapping.zone = column;
+      }
+      
+      // Service Level mappings - more comprehensive
       if (lowerColumn.includes('service') || lowerColumn.includes('level') || 
           lowerColumn.includes('type') || lowerColumn.includes('method') ||
-          lowerColumn.includes('shipping') || lowerColumn.includes('delivery')) {
+          lowerColumn.includes('shipping') || lowerColumn.includes('delivery') ||
+          lowerColumn.includes('class') || lowerColumn.includes('priority') ||
+          lowerColumn.includes('speed') || lowerColumn.includes('transit') ||
+          lowerColumn.includes('option') || lowerColumn.includes('tier')) {
         autoMapping.serviceLevel = column;
       }
     });
