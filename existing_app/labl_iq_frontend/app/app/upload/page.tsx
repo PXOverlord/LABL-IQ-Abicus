@@ -586,10 +586,10 @@ export default function UploadPage() {
         originZip: settings.origin_zip,
         defaultMarkup: typeof settings.markupPct === 'number' ? settings.markupPct * 100 : undefined,
         fuelSurcharge: typeof settings.fuelSurchargePct === 'number' ? settings.fuelSurchargePct * 100 : undefined,
-        dasSurcharge: settings.das_surcharge,
-        edasSurcharge: settings.edas_surcharge,
-        remoteSurcharge: settings.remote_surcharge,
-        dimDivisor: settings.dimDivisor,
+        dasSurcharge: typeof settings.das_surcharge === 'number' ? settings.das_surcharge : undefined,
+        edasSurcharge: typeof settings.edas_surcharge === 'number' ? settings.edas_surcharge : undefined,
+        remoteSurcharge: typeof settings.remote_surcharge === 'number' ? settings.remote_surcharge : undefined,
+        dimDivisor: typeof settings.dimDivisor === 'number' ? settings.dimDivisor : undefined,
       });
       toast.success('Default settings saved');
     } catch (err) {
