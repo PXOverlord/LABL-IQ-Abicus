@@ -53,14 +53,25 @@ export default function PreviewPage() {
     const run = async () => {
       try {
         const data = await analysisAPI.getHistory({ limit: 20 });
-        const mapped: IndexItem[] = data.map((item) => ({
-          id: item.id,
-          timestamp: item.createdAt,
-          filename: item.fileName ?? item.filename ?? null,
-          merchant: item.merchant ?? null,
-          summary: { total_savings: item.totalSavings ?? item.summary?.total_savings },
-          shipment_count: item.totalPackages ?? (Array.isArray(item.results) ? item.results.length : undefined),
-        }));
+        const mapped: IndexItem[] = data.map((item: any) => {
+          const totalSavings =
+            item.totalSavings ??
+            (item.summary ? item.summary.total_savings ?? item.summary.totalSavings : undefined) ??
+            0;
+          const shipmentCount =
+            item.totalPackages ??
+            (Array.isArray(item.results) ? item.results.length : undefined) ??
+            item.summary?.total_packages ??
+            item.summary?.total_shipments;
+          return {
+            id: item.id,
+            timestamp: item.createdAt,
+            filename: item.fileName ?? item.filename ?? null,
+            merchant: item.merchant ?? null,
+            summary: { total_savings: totalSavings },
+            shipment_count: shipmentCount,
+          };
+        });
         setAnalyses(mapped);
         if (!selectedId && mapped.length) setSelectedId(mapped[0].id);
       } catch {
