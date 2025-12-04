@@ -841,7 +841,7 @@ export default function UploadPage() {
                   <div key={field.key} className="space-y-2">
                     <Label htmlFor={field.key}>{field.label}</Label>
                     <Select
-                      value={columnMapping[field.key] || ''}
+                      value={(columnMapping as Record<string, string | undefined>)[field.key] || ''}
                       onValueChange={(value) => handleMappingChange(field.key, value)}
                     >
                       <SelectTrigger>
