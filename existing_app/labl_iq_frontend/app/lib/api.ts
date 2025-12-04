@@ -1,23 +1,93 @@
 
 import axios from 'axios';
+import { FASTAPI_BASE_URL } from './config';
 
 // FastAPI backend base URL - update this to your actual backend URL
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'https://labl-iq-backend.onrender.com';
+const BACKEND_URL = FASTAPI_BASE_URL || 'https://labl-iq-backend.onrender.com';
 
 // Demo mode - set to true to use mock data instead of API calls
 const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === 'true' || false;
 
 const api = axios.create({
   baseURL: BACKEND_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
+
+function extractFilename(contentDisposition: string | undefined, fallback: string): string {
+  if (!contentDisposition) return fallback;
+  const match = contentDisposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+  const encoded = match?.[1];
+  const simple = match?.[2];
+  const candidate = encoded ? decodeURIComponent(encoded) : simple;
+  return candidate?.trim() || fallback;
+}
+
+function getAccessToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('jwt_token');
+}
+
+function getRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem('refresh_token');
+}
+
+function storeTokens(accessToken?: string, refreshToken?: string) {
+  if (typeof window === 'undefined') return;
+  if (accessToken) {
+    localStorage.setItem('jwt_token', accessToken);
+  }
+  if (refreshToken) {
+    localStorage.setItem('refresh_token', refreshToken);
+  }
+}
+
+function clearTokens() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('jwt_token');
+  localStorage.removeItem('refresh_token');
+}
+
+let refreshRequest: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  if (refreshRequest) {
+    return refreshRequest;
+  }
+
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    return null;
+  }
+
+  refreshRequest = axios
+    .post<AuthResponse>(
+      `${BACKEND_URL}/api/auth/refresh`,
+      { refresh_token: refreshToken },
+      { headers: { 'Content-Type': 'application/json' } }
+    )
+    .then((response) => {
+      const { access_token, refresh_token } = response.data;
+      if (access_token) {
+        storeTokens(access_token, refresh_token || refreshToken);
+      }
+      return access_token ?? null;
+    })
+    .catch((error) => {
+      console.error('Token refresh failed:', error);
+      clearTokens();
+      return null;
+    })
+    .finally(() => {
+      refreshRequest = null;
+    });
+
+  return refreshRequest;
+}
 
 // Request interceptor to add JWT token
 api.interceptors.request.use((config) => {
   if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('jwt_token');
+    const token = getAccessToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -35,10 +105,30 @@ api.interceptors.response.use(
       return Promise.reject(new Error('BACKEND_UNAVAILABLE'));
     }
     
-    if (error.response?.status === 401) {
-      // Token expired, try to refresh or redirect to login
-      localStorage.removeItem('jwt_token');
-      window.location.href = '/login';
+    const { response: resp, config } = error;
+
+    if (resp?.status === 401 && config) {
+      const originalRequest = config as typeof config & { _retry?: boolean };
+      if (originalRequest._retry) {
+        clearTokens();
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        }
+        return Promise.reject(error);
+      }
+
+      originalRequest._retry = true;
+
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return api(originalRequest);
+      }
+
+      clearTokens();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -46,12 +136,9 @@ api.interceptors.response.use(
 
 export interface AuthResponse {
   access_token: string;
+  refresh_token: string;
   token_type: string;
-  user: {
-    id: string;
-    email: string;
-    role: string;
-  };
+  expires_in: number;
 }
 
 export interface User {
@@ -64,15 +151,50 @@ export interface User {
   weightConversion?: string;
 }
 
-export interface Analysis {
+export interface UserSettings {
   id: string;
-  filename: string;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  backendAnalysisId?: string;
-  results?: any;
-  error?: string;
+  userId: string;
+  originZip?: string | null;
+  defaultMarkup: number;
+  fuelSurcharge: number;
+  dasSurcharge: number;
+  edasSurcharge: number;
+  remoteSurcharge: number;
+  dimDivisor: number;
+  standardMarkup: number;
+  expeditedMarkup: number;
+  priorityMarkup: number;
+  nextDayMarkup: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface Analysis {
+  id: string;
+  fileName?: string | null;
+  filename?: string | null; // legacy support
+  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  fileSize?: number;
+  columnMapping?: Record<string, any> | null;
+  amazonRate?: number | null;
+  fuelSurcharge?: number | null;
+  serviceLevel?: string | null;
+  markupPercent?: number | null;
+  totalPackages?: number | null;
+  totalCurrentCost?: number | null;
+  totalAmazonCost?: number | null;
+  totalSavings?: number | null;
+  percentSavings?: number | null;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+  merchant?: string | null;
+  title?: string | null;
+  tags?: string[] | null;
+  notes?: string | null;
+  results?: any[];
+  settings?: Record<string, any> | null;
 }
 
 export interface ColumnProfile {
@@ -89,26 +211,110 @@ export interface ColumnMapping {
   length?: string;
   width?: string;
   height?: string;
-  originZip?: string;
-  destinationZip?: string;
+  from_zip?: string;
+  to_zip?: string;
+  carrier?: string;
   rate?: string;
   zone?: string;
-  serviceLevel?: string;
+  service_level?: string;
+  package_type?: string;
+  shipment_id?: string;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt: string;
+  suggestions?: string[];
+}
+
+export interface AssistantSession {
+  sessionId: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: AssistantMessage[];
+}
+
+export interface AnalysisComparisonItem {
+  id: string;
+  filename?: string | null;
+  title?: string | null;
+  merchant?: string | null;
+  notes?: string | null;
+  timestamp?: string | null;
+  totalSavings: number;
+  totalShipments: number;
+  avgSavingsPerShipment: number;
+  percentSavings?: number;
+  totalCurrentCost?: number;
+  totalAmazonCost?: number;
+  error?: string;
+}
+
+export interface AnalysisComparisonSummary {
+  totalSavings: number;
+  totalShipments: number;
+  avgSavingsPerShipment: number;
+  totalCurrentCost: number;
+  totalAmazonCost: number;
+  trend: { date: string; savings: number; shipments: number }[];
+  zones: { zone: number; count: number }[];
+  weights: { bucket: string; count: number }[];
+  merchants: {
+    merchant: string;
+    analyses: number;
+    totalSavings: number;
+    totalShipments: number;
+    avgSavingsPerShipment: number;
+  }[];
+}
+
+export interface AnalysisComparisonResponse {
+  items: AnalysisComparisonItem[];
+  summary: AnalysisComparisonSummary;
+}
+
+export interface AnalysisUploadResponse {
+  analysisId: string;
+  fileName: string;
+  fileSize: number;
+  columns: string[];
+  suggestedMappings?: Record<string, string>;
+  message?: string;
 }
 
 // Authentication API
 export const authAPI = {
   login: async (email: string, password: string): Promise<AuthResponse> => {
-    const response = await api.post('/api/auth/login', { email, password });
-    if (response.data.access_token) {
-      localStorage.setItem('jwt_token', response.data.access_token);
-    }
+    const formData = new URLSearchParams();
+    formData.set('username', email);
+    formData.set('password', password);
+
+    const response = await api.post<AuthResponse>(
+      '/api/auth/login',
+      formData,
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    );
+
+    const { access_token, refresh_token } = response.data;
+    storeTokens(access_token, refresh_token);
+
     return response.data;
   },
 
   register: async (email: string, password: string): Promise<AuthResponse> => {
-    const response = await api.post('/api/auth/register', { email, password });
-    return response.data;
+    const response = await api.post<User>('/api/auth/register', { email, password });
+    return {
+      access_token: '',
+      refresh_token: '',
+      token_type: 'bearer',
+      expires_in: 0,
+    };
   },
 
   me: async (): Promise<User> => {
@@ -122,25 +328,62 @@ export const authAPI = {
         defaultSurcharge: 2.50,
       };
     }
-    const response = await api.get('/api/auth/me');
+    const response = await api.get<User>('/api/auth/me');
     return response.data;
   },
 
-  updateSettings: async (settings: Partial<User>): Promise<User> => {
+  getSettings: async (): Promise<UserSettings> => {
     if (DEMO_MODE) {
+      const now = new Date().toISOString();
       return {
-        id: 'demo-user-1',
-        email: 'john@doe.com',
-        role: 'ADMIN',
-        ...settings,
+        id: 'demo-settings',
+        userId: 'demo-user-1',
+        originZip: '90210',
+        defaultMarkup: 10,
+        fuelSurcharge: 16,
+        dasSurcharge: 1.98,
+        edasSurcharge: 3.92,
+        remoteSurcharge: 14.15,
+        dimDivisor: 139,
+        standardMarkup: 0,
+        expeditedMarkup: 10,
+        priorityMarkup: 15,
+        nextDayMarkup: 25,
+        createdAt: now,
+        updatedAt: now,
       };
     }
-    const response = await api.put('/api/auth/settings', settings);
+    const response = await api.get<UserSettings>('/api/auth/settings');
+    return response.data;
+  },
+
+  updateSettings: async (settings: Partial<UserSettings>): Promise<UserSettings> => {
+    if (DEMO_MODE) {
+      const now = new Date().toISOString();
+      return {
+        id: 'demo-settings',
+        userId: 'demo-user-1',
+        originZip: settings.originZip ?? '90210',
+        defaultMarkup: settings.defaultMarkup ?? 10,
+        fuelSurcharge: settings.fuelSurcharge ?? 16,
+        dasSurcharge: settings.dasSurcharge ?? 1.98,
+        edasSurcharge: settings.edasSurcharge ?? 3.92,
+        remoteSurcharge: settings.remoteSurcharge ?? 14.15,
+        dimDivisor: settings.dimDivisor ?? 139,
+        standardMarkup: settings.standardMarkup ?? 0,
+        expeditedMarkup: settings.expeditedMarkup ?? 10,
+        priorityMarkup: settings.priorityMarkup ?? 15,
+        nextDayMarkup: settings.nextDayMarkup ?? 25,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+    const response = await api.put<UserSettings>('/api/auth/settings', settings);
     return response.data;
   },
 
   logout: () => {
-    localStorage.removeItem('jwt_token');
+    clearTokens();
   },
 };
 
@@ -173,7 +416,7 @@ export const analysisAPI = {
     return response.data;
   },
 
-  upload: async (file: File, onProgress?: (progress: number) => void): Promise<{ analysis_id: string }> => {
+  upload: async (file: File, onProgress?: (progress: number) => void): Promise<AnalysisUploadResponse> => {
     const formData = new FormData();
     formData.append('file', file);
 
@@ -192,24 +435,81 @@ export const analysisAPI = {
     return response.data;
   },
 
-  mapColumns: async (analysisId: string, mapping: ColumnMapping): Promise<void> => {
-    await api.post('/api/analysis/map-columns', {
-      analysis_id: analysisId,
-      column_mapping: mapping,
+  getUploadDetails: async (analysisId: string): Promise<AnalysisUploadResponse> => {
+    const response = await api.get(`/api/analysis/upload/${analysisId}/columns`);
+    const data = response.data ?? {};
+    let suggestedMappings = data.suggestedMappings;
+    if (typeof suggestedMappings === 'string') {
+      try {
+        suggestedMappings = JSON.parse(suggestedMappings);
+      } catch {
+        suggestedMappings = {};
+      }
+    }
+    return {
+      analysisId: data.analysisId,
+      fileName: data.fileName,
+      fileSize: data.fileSize,
+      columns: Array.isArray(data.columns) ? data.columns : [],
+      suggestedMappings: suggestedMappings ?? {},
+      message: data.message ?? 'Columns loaded successfully',
+    };
+  },
+
+  mapColumns: async (
+    analysisId: string,
+    mapping: ColumnMapping
+  ): Promise<{ message?: string; rowCount?: number }> => {
+    const sanitizedMapping: Record<string, string> = {};
+    Object.entries(mapping).forEach(([key, value]) => {
+      if (value) {
+        sanitizedMapping[key] = value;
+      }
     });
+    const response = await api.post(`/api/analysis/map-columns/${analysisId}`, sanitizedMapping);
+    return response.data ?? {};
+  },
+
+  compare: async (ids: string[]): Promise<AnalysisComparisonResponse> => {
+    if (!ids.length) {
+      return {
+        items: [],
+        summary: {
+          totalSavings: 0,
+          totalShipments: 0,
+          avgSavingsPerShipment: 0,
+          totalCurrentCost: 0,
+          totalAmazonCost: 0,
+          trend: [],
+          zones: [],
+          weights: [],
+          merchants: [],
+        },
+      };
+    }
+    const response = await api.get('/api/analysis/compare', {
+      params: { ids: ids.join(',') },
+    });
+    return response.data as AnalysisComparisonResponse;
   },
 
   process: async (
     analysisId: string,
-    settings: {
-      originZip: string;
-      markup: number;
-      surcharge: number;
+    payload: {
+      amazonRate?: number;
+      fuelSurcharge?: number;
+      serviceLevel?: string;
+      markupPercent?: number;
+      useAdvancedSettings?: boolean;
     }
-  ): Promise<{ backend_analysis_id: string }> => {
+  ): Promise<any> => {
     const response = await api.post('/api/analysis/process', {
-      analysis_id: analysisId,
-      settings,
+      analysisId,
+      amazonRate: payload.amazonRate ?? 0.5,
+      fuelSurcharge: payload.fuelSurcharge ?? 16.0,
+      serviceLevel: payload.serviceLevel ?? 'standard',
+      markupPercent: payload.markupPercent,
+      useAdvancedSettings: payload.useAdvancedSettings ?? true,
     });
     return response.data;
   },
@@ -250,32 +550,87 @@ export const analysisAPI = {
 
   getResults: async (analysisId: string): Promise<any> => {
     const response = await api.get(`/api/analysis/results/${analysisId}`);
+    const data = response.data || {};
+    if (typeof data.columnMapping === 'string') {
+      try {
+        data.columnMapping = JSON.parse(data.columnMapping);
+      } catch {
+        data.columnMapping = null;
+      }
+    }
+    if (typeof data.tags === 'string') {
+      try {
+        data.tags = JSON.parse(data.tags);
+      } catch {
+        data.tags = data.tags
+          .split(',')
+          .map((tag: string) => tag.trim())
+          .filter(Boolean);
+      }
+    }
+    data.results = data.results || [];
+    data.settings = data.settings || {};
+    if (data.visualizations && typeof data.visualizations === 'object') {
+      const parsed: Record<string, any> = {};
+      Object.entries(data.visualizations).forEach(([key, value]) => {
+        if (typeof value === 'string') {
+          try {
+            parsed[key] = JSON.parse(value);
+          } catch {
+            parsed[key] = value;
+          }
+        } else {
+          parsed[key] = value;
+        }
+      });
+      data.visualizations = parsed;
+    }
+    return data;
+  },
+
+  deleteAnalysis: async (analysisId: string): Promise<void> => {
+    await api.delete(`/api/analysis/${analysisId}`);
+  },
+
+  updateMetadata: async (analysisId: string, payload: { merchant?: string; title?: string; tags?: string[]; notes?: string }): Promise<Analysis> => {
+    const response = await api.patch(`/api/analysis/${analysisId}/meta`, payload);
     return response.data;
   },
 
-  getHistory: async (): Promise<Analysis[]> => {
+  exportAnalysis: async (analysisId: string, format: 'csv' | 'excel' | 'pdf'): Promise<{ blob: Blob; filename: string }> => {
+    const response = await api.get(`/api/analysis/export/${analysisId}/${format}`, {
+      responseType: 'blob',
+    });
+    const fallbackName = `analysis_${analysisId}.${format === 'excel' ? 'xlsx' : format}`;
+    const filename = extractFilename(response.headers['content-disposition'], fallbackName);
+    const blob = response.data instanceof Blob
+      ? response.data
+      : new Blob([response.data], { type: response.headers['content-type'] || 'application/octet-stream' });
+    return { blob, filename };
+  },
+
+  getHistory: async (options?: { offset?: number; limit?: number }): Promise<Analysis[]> => {
     if (DEMO_MODE) {
       return [
         {
           id: 'analysis-1',
+          fileName: 'shipping_data_q4_2024.csv',
           filename: 'shipping_data_q4_2024.csv',
           status: 'COMPLETED',
-          backendAnalysisId: 'backend-1',
-          results: { summary: { totalSavings: 2750.50 } },
           createdAt: new Date(Date.now() - 86400000).toISOString(), // 1 day ago
           updatedAt: new Date(Date.now() - 86400000).toISOString(),
         },
         {
           id: 'analysis-2',
+          fileName: 'monthly_shipments_nov.xlsx',
           filename: 'monthly_shipments_nov.xlsx',
           status: 'COMPLETED',
-          backendAnalysisId: 'backend-2',
-          results: { summary: { totalSavings: 1890.25 } },
           createdAt: new Date(Date.now() - 172800000).toISOString(), // 2 days ago
           updatedAt: new Date(Date.now() - 172800000).toISOString(),
         },
         {
           id: 'analysis-3',
+          fileName: 'sample_data.csv',
           filename: 'sample_data.csv',
           status: 'PROCESSING',
           createdAt: new Date(Date.now() - 600000).toISOString(), // 10 minutes ago
@@ -283,8 +638,90 @@ export const analysisAPI = {
         },
       ];
     }
-    const response = await api.get('/api/analysis/history');
-    return response.data;
+    const params: Record<string, number> = {};
+    if (typeof options?.offset === 'number') {
+      params.skip = options.offset;
+    }
+    if (typeof options?.limit === 'number') {
+      params.limit = options.limit;
+    }
+
+    const response = await api.get('/api/analysis', {
+      params,
+    });
+
+    const records: Analysis[] = (response.data || []).map((item: any) => {
+      let columnMapping = item.columnMapping;
+      if (typeof columnMapping === 'string') {
+        try {
+          columnMapping = JSON.parse(columnMapping);
+        } catch {
+          columnMapping = null;
+        }
+      }
+
+      let tags = item.tags;
+      if (typeof tags === 'string') {
+        try {
+          tags = JSON.parse(tags);
+        } catch {
+          tags = tags
+            .split(',')
+            .map((tag: string) => tag.trim())
+            .filter(Boolean);
+        }
+      }
+
+      let visualizations = item.visualizations;
+      if (visualizations && typeof visualizations === 'object') {
+        const parsed: Record<string, any> = {};
+        Object.entries(visualizations).forEach(([key, value]) => {
+          if (typeof value === 'string') {
+            try {
+              parsed[key] = JSON.parse(value);
+            } catch {
+              parsed[key] = value;
+            }
+          } else {
+            parsed[key] = value;
+          }
+        });
+        visualizations = parsed;
+      }
+
+      return {
+        id: item.id,
+        fileName: item.fileName,
+        filename: item.fileName, // maintain legacy accessor
+        status: item.status,
+        fileSize: item.fileSize,
+        columnMapping,
+        amazonRate: item.amazonRate,
+        fuelSurcharge: item.fuelSurcharge,
+        serviceLevel: item.serviceLevel,
+        markupPercent: item.markupPercent,
+        totalPackages: item.totalPackages,
+        totalCurrentCost: item.totalCurrentCost,
+        totalAmazonCost: item.totalAmazonCost,
+        totalSavings: item.totalSavings,
+        percentSavings: item.percentSavings,
+        errorMessage: item.errorMessage,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        completedAt: item.completedAt,
+        merchant: item.merchant,
+        title: item.title,
+        tags,
+        notes: item.notes,
+        results: item.results || [],
+        settings: item.settings || {},
+        totalResults: item.totalResults ?? item.totalPackages ?? item.results?.length ?? 0,
+        previewCount: item.previewCount ?? item.results?.length ?? 0,
+        visualizations: visualizations ?? null,
+      };
+    });
+
+    return records;
   },
 
   getStatus: async (analysisId: string): Promise<{ status: string; progress?: number }> => {
@@ -330,17 +767,49 @@ export const profilesAPI = {
         },
       ];
     }
-    const response = await api.get('/api/profiles/list');
-    return response.data.profiles || [];
+    const response = await api.get('/api/analysis/profiles');
+    const profiles: ColumnProfile[] = (response.data || []).map((profile: any) => {
+      let mapping = profile.mapping;
+      if (typeof mapping === 'string') {
+        try {
+          mapping = JSON.parse(mapping);
+        } catch {
+          mapping = {};
+        }
+      }
+      return {
+        ...profile,
+        mapping,
+      };
+    });
+
+    return profiles;
   },
 
-  create: async (profile: Omit<ColumnProfile, 'id' | 'createdAt' | 'updatedAt'>): Promise<ColumnProfile> => {
-    const response = await api.post('/api/profiles', profile);
-    return response.data;
+  create: async (profile: { name: string; description?: string; mapping: Record<string, any>; isPublic?: boolean }): Promise<ColumnProfile> => {
+    const response = await api.post('/api/analysis/profiles', {
+      name: profile.name,
+      description: profile.description,
+      mapping: profile.mapping,
+      isPublic: profile.isPublic ?? false,
+    });
+    const data = response.data;
+    let mapping = data.mapping;
+    if (typeof mapping === 'string') {
+      try {
+        mapping = JSON.parse(mapping);
+      } catch {
+        mapping = {};
+      }
+    }
+    return {
+      ...data,
+      mapping,
+    };
   },
 
   delete: async (profileId: string): Promise<void> => {
-    await api.delete(`/api/profiles/${profileId}`);
+    await api.delete(`/api/analysis/profiles/${profileId}`);
   },
 };
 
@@ -404,3 +873,50 @@ export const adminAPI = {
 };
 
 export default api;
+
+// Assistant API
+const mapAssistantMessage = (payload: any): AssistantMessage => ({
+  id: payload?.id ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  role: (payload?.role ?? 'assistant') as AssistantMessage['role'],
+  content: payload?.content ?? '',
+  createdAt: payload?.createdAt ?? payload?.created_at ?? new Date().toISOString(),
+  suggestions: Array.isArray(payload?.suggestions)
+    ? (payload.suggestions as string[])
+    : undefined,
+});
+
+const mapAssistantSession = (payload: any): AssistantSession => ({
+  sessionId: payload?.sessionId ?? payload?.session_id ?? '',
+  createdAt: payload?.createdAt ?? payload?.created_at ?? new Date().toISOString(),
+  updatedAt: payload?.updatedAt ?? payload?.updated_at ?? payload?.createdAt ?? new Date().toISOString(),
+  messages: Array.isArray(payload?.messages)
+    ? (payload.messages as any[]).map(mapAssistantMessage)
+    : [],
+});
+
+export const assistantAPI = {
+  async createSession(context?: Record<string, any>): Promise<AssistantSession> {
+    const response = await api.post('/api/assistant/sessions', { context });
+    return mapAssistantSession(response.data);
+  },
+
+  async getSession(sessionId: string): Promise<AssistantSession> {
+    const response = await api.get(`/api/assistant/sessions/${sessionId}`);
+    return mapAssistantSession(response.data);
+  },
+
+  async sendMessage(
+    sessionId: string,
+    message: string,
+    context?: Record<string, any>
+  ): Promise<{ message: AssistantMessage; session: AssistantSession }> {
+    const response = await api.post(`/api/assistant/sessions/${sessionId}/messages`, {
+      message,
+      context,
+    });
+    return {
+      message: mapAssistantMessage(response.data.message),
+      session: mapAssistantSession(response.data.session),
+    };
+  },
+};

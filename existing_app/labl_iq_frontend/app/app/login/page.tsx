@@ -2,7 +2,6 @@
 'use client';
 
 import { useState } from 'react';
-import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -11,6 +10,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '@radix-ui/react-label';
 import { TrendingUp, Mail, Lock, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { authAPI } from '../../lib/api';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -25,19 +25,9 @@ export default function LoginPage() {
     setError('');
 
     try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      });
-
-      if (result?.error) {
-        setError('Invalid email or password');
-        toast.error('Invalid email or password');
-      } else {
-        toast.success('Welcome back!');
-        router.push('/dashboard');
-      }
+      await authAPI.login(email, password);
+      toast.success('Welcome back!');
+      router.push('/dashboard');
     } catch (error) {
       setError('An error occurred. Please try again.');
       toast.error('An error occurred. Please try again.');
@@ -116,14 +106,14 @@ export default function LoginPage() {
                     Signing In...
                   </>
                 ) : (
-                  'Sign In'
+                  "Sign In"
                 )}
               </Button>
             </form>
 
             <div className="mt-6 text-center">
               <p className="text-sm text-gray-600">
-                Don't have an account?{' '}
+                Don&apos;t have an account?{' '}
                 <Link href="/register" className="text-primary hover:underline font-medium">
                   Register here
                 </Link>

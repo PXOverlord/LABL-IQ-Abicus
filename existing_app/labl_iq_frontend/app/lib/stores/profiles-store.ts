@@ -6,7 +6,7 @@ interface ProfilesState {
   profiles: ColumnProfile[];
   isLoading: boolean;
   fetchProfiles: () => Promise<void>;
-  createProfile: (profile: Omit<ColumnProfile, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
+  createProfile: (profile: { name: string; description?: string; mapping: Record<string, any>; isPublic?: boolean }) => Promise<ColumnProfile>;
   deleteProfile: (profileId: string) => Promise<void>;
 }
 
@@ -38,6 +38,7 @@ export const useProfilesStore = create<ProfilesState>((set, get) => ({
         profiles: [...state.profiles, newProfile], 
         isLoading: false 
       }));
+      return newProfile;
     } catch (error) {
       set({ isLoading: false });
       throw error;

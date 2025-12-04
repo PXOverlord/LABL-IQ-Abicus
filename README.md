@@ -24,9 +24,19 @@ project-root/
 ```
 
 - **Frontend:** `existing_app/labl_iq_frontend/app/`
-- **Backend:** `existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend/`
+- **Backend (canonical):** `existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend/`
+- **Legacy utilities:** `app/simple_backend.py` (kept for reference only; do not target for new work)
 - **Figma/Design:** `existing_app/labl_iq_frontend_figma/`, `figma_design/`
 - **Archive:** `ARCHIVE_DO_NOT_USE/` (for reference only)
+
+> **Backend source of truth (August 2025):** All new APIs, fixes, and integrations must target the FastAPI+Prisma service in `existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend`. The lightweight `app/simple_backend.py` remains in the repo strictly as a legacy prototype used by earlier Next.js API routes; it will be retired once the remaining features are migrated. When choosing environment variables, point the frontend at the FastAPI service (`http://localhost:8000` in development) unless you intentionally need the legacy prototype.
+
+> **Current limitations:** Metadata edits (merchant/title/tags) are still routed through the legacy bridge and should be migrated once Prisma fields exist.
+
+**Backend TODOs before production**
+- Extend `Analysis` Prisma model to store processed shipment rows or persist results to object storage; expose retrieval/export endpoints in FastAPI.
+- Add fields (merchant/title/tags) to Prisma + FastAPI so `/api/analysis/results` returns the metadata used by the UI.
+- Once the above is ready, update `ToolbarClient`, `/app/api/analyses/*`, and the reports/dashboard views to drop the remaining legacy bridges.
 
 ---
 
@@ -57,9 +67,22 @@ npm run dev
 # App: http://localhost:3000
 ```
 
+- **Key environment variables:**
+  - `NEXT_PUBLIC_BACKEND_URL` → FastAPI base URL (defaults to `http://localhost:8000`)
+  - `NEXT_PUBLIC_LEGACY_API_URL` → _Optional_ legacy prototype URL (defaults to `http://localhost:8001`; only needed while migrating remaining flows)
+- **Create a user account:**
+  - Run the FastAPI server and create a user via `/api/auth/register` (available in Swagger docs), **or** seed an admin using `python scripts/seed_admin.py` in `existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend`
+  - All authenticated frontend flows (upload, mapping, processing, exports) require a valid login token
+
 - **Prisma:**
   - `npx prisma generate` (after any schema changes)
   - `npx prisma migrate dev` (to apply migrations)
+
+### AI Assistant Configuration
+- Backend defaults to a local rule-based assistant. Set `AI_ASSISTANT_PROVIDER=openai` and `OPENAI_API_KEY` in `existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend/.env` to enable OpenAI responses.
+- Optional tuning variables: `OPENAI_MODEL` (default `gpt-4o-mini`) and `OPENAI_API_BASE` for Azure/OpenAI-compatible endpoints.
+- Session data persists under `app/data/assistant_sessions/`. Clear this directory to reset conversations during development.
+- Validate the feature with `python3 -m pytest existing_app/labl_iq_analysis/hybrid_backend/labl_iq_hybrid_backend/app/test_assistant_service.py`.
 
 ---
 
@@ -98,6 +121,9 @@ npm run dev
 - `POST /api/process` - Process data
 - `GET /api/results/{id}` - Get results
 - `POST /api/export` - Export results
+- `POST /api/assistant/sessions` - Start an AI assistant session
+- `POST /api/assistant/sessions/{sessionId}/messages` - Send a chat message to the assistant
+- `GET /api/assistant/sessions/{sessionId}` - Retrieve AI conversation history
 - `GET /health` - Health check
 - `GET /docs` - Interactive API docs
 

@@ -1,68 +1,56 @@
 
+
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
 import { History, FileText, Download, Eye, Trash2 } from 'lucide-react';
-import { format } from 'date-fns';
 import toast from 'react-hot-toast';
-
-interface Analysis {
-  id: string;
-  name: string;
-  status: string;
-  createdAt: Date;
-  records: number;
-  totalSavings: number;
-}
+import { saveAs } from 'file-saver';
+import { useAnalysisStore } from '../../hooks/useAnalysisStore';
+import { analysisAPI } from '../../lib/api';
 
 export default function HistoryPage() {
   const router = useRouter();
-  const [analyses, setAnalyses] = useState<Analysis[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const analyses = useAnalysisStore((state) => state.analyses);
+  const isLoading = useAnalysisStore((state) => state.isLoading);
+  const loadHistory = useAnalysisStore((state) => state.loadHistory);
+  const deleteAnalysis = useAnalysisStore((state) => state.deleteAnalysis);
 
   useEffect(() => {
-    // Mock data for testing
-    const mockAnalyses: Analysis[] = [
-      {
-        id: 'analysis-1',
-        name: 'Amazon Shipping Analysis',
-        status: 'completed',
-        createdAt: new Date('2024-01-15'),
-        records: 1250,
-        totalSavings: 2340.50
-      },
-      {
-        id: 'analysis-2',
-        name: 'Q4 Rate Comparison',
-        status: 'completed',
-        createdAt: new Date('2024-01-10'),
-        records: 890,
-        totalSavings: 1567.25
-      }
-    ];
-    
-    setTimeout(() => {
-      setAnalyses(mockAnalyses);
-      setIsLoading(false);
-    }, 1000);
-  }, []);
+    loadHistory().catch((error) => {
+      console.error('Failed to load analyses history', error);
+      toast.error('Unable to load analyses history');
+    });
+  }, [loadHistory]);
 
   const handleViewAnalysis = (analysisId: string) => {
     router.push(`/analysis/${analysisId}`);
   };
 
-  const handleDownloadResults = (analysisId: string) => {
-    toast.success(`Downloading results for ${analysisId}`);
+  const handleDownloadResults = async (analysisId: string) => {
+    try {
+      const { blob, filename } = await analysisAPI.exportAnalysis(analysisId, 'excel');
+      saveAs(blob, filename);
+      toast.success('Export ready');
+    } catch (error) {
+      console.error('Failed to export analysis', error);
+      toast.error('Export failed');
+    }
   };
 
-  const handleDeleteAnalysis = (analysisId: string) => {
-    if (confirm('Are you sure you want to delete this analysis?')) {
-      setAnalyses(prev => prev.filter(a => a.id !== analysisId));
-      toast.success('Analysis deleted successfully');
+  const handleDeleteAnalysis = async (analysisId: string) => {
+    const confirmed = window.confirm('Delete this analysis and its uploaded file? This cannot be undone.');
+    if (!confirmed) return;
+    try {
+      await deleteAnalysis(analysisId);
+      toast.success('Analysis deleted');
+    } catch (error) {
+      console.error('Failed to delete analysis', error);
+      toast.error('Delete failed');
     }
   };
 
@@ -100,66 +88,73 @@ export default function HistoryPage() {
         </Card>
       ) : (
         <div className="grid gap-6">
-          {analyses.map((analysis) => (
-            <Card key={analysis.id} className="hover:shadow-lg transition-shadow">
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <FileText className="h-5 w-5 text-primary" />
-                    <div>
-                      <h3 className="font-semibold">{analysis.name}</h3>
+          {analyses.map((analysis) => {
+            const createdAt = analysis.timestamp ? new Date(analysis.timestamp) : null;
+            const shipmentCount = analysis.summary?.total_shipments ?? analysis.summary?.total_packages ?? 0;
+            const totalSavings = analysis.summary?.total_savings ?? 0;
+            const displayName = analysis.filename || analysis.fileName || analysis.id;
+            const status = analysis.status?.toLowerCase() || 'unknown';
+
+            return (
+              <Card key={analysis.id} className="hover:shadow-lg transition-shadow">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <FileText className="h-5 w-5 text-primary" />
+                  <div>
+                      <h3 className="font-semibold">{displayName}</h3>
                       <p className="text-sm text-gray-500">
-                        {format(analysis.createdAt, 'MMM dd, yyyy')}
+                        {createdAt ? createdAt.toLocaleString() : 'Recently generated'}
                       </p>
-                    </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant="secondary">
-                      {analysis.status}
-                    </Badge>
-                    <div className="flex space-x-1">
-                      <Button
-                        size="sm"
-                        variant="ghost"
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Badge variant="secondary">
+                      {status}
+                  </Badge>
+                  <div className="flex space-x-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
                         onClick={() => handleViewAnalysis(analysis.id)}
                       >
                         <Eye className="h-4 w-4" />
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleDownloadResults(analysis.id)}
-                      >
-                        <Download className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => handleDeleteAnalysis(analysis.id)}
-                        className="text-red-600 hover:text-red-700"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-500">Records Processed:</span>
-                    <span className="ml-2 font-medium">{analysis.records}</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">Total Savings:</span>
-                    <span className="ml-2 font-medium text-green-600">
-                      ${analysis.totalSavings.toFixed(2)}
-                    </span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDownloadResults(analysis.id)}
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDeleteAnalysis(analysis.id)}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-          ))}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-gray-500">Records Processed:</span>
+                    <span className="ml-2 font-medium">{shipmentCount.toLocaleString()}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Total Savings:</span>
+                  <span className="ml-2 font-medium text-green-600">
+                      ${Number(totalSavings).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+            );
+          })}
         </div>
       )}
     </div>

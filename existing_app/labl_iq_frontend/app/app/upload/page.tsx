@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useAnalysisStore } from '../../hooks/useAnalysisStore';
-import { useRouter } from 'next/navigation';
+import { analysisAPI, ColumnMapping } from '../../lib/api';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
@@ -10,63 +11,203 @@ import { Label } from '../../components/ui/label';
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import { Progress } from '../../components/ui/progress';
 import { Upload, FileText, X, AlertCircle, CheckCircle, Loader2, ArrowRight, Settings, Map } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { useAuthStore } from '../../lib/stores/auth-store';
+import { useProfilesStore } from '../../lib/stores/profiles-store';
 
 interface UploadResult {
-  success: boolean;
+  analysisId: string;
   fileName?: string;
   fileSize?: number;
   columns?: string[];
-  recordCount?: number;
-  filePath?: string;
-  fileId?: string;
+  suggestedMappings?: Record<string, string>;
   message?: string;
-  error?: string;
-}
-
-interface ColumnMapping {
-  [key: string]: string;
-}
-
-interface MappingProfile {
-  id: string;
-  name: string;
-  mapping: ColumnMapping;
-  createdAt: Date;
 }
 
 const REQUIRED_FIELDS = [
   { key: 'weight', label: 'Weight', placeholder: 'weight, wt, weight (oz), weight (lbs), weight (kg)' },
-  { key: 'carrier_rate', label: 'Carrier Rate', placeholder: 'carrier rate, rate, cost, shipping cost, total cost, postage cost' }
+  { key: 'rate', label: 'Carrier Rate', placeholder: 'carrier rate, rate, cost, shipping cost, total cost, postage cost' }
 ];
 
 const OPTIONAL_FIELDS = [
-  { key: 'destination_zip', label: 'Destination ZIP (Optional)', placeholder: 'destination zip, dest zip, zip, postal code, postcode' },
-  { key: 'length', label: 'Length (Optional)', placeholder: 'length, l, len, package length' },
-  { key: 'width', label: 'Width (Optional)', placeholder: 'width, w, wid, package width' },
-  { key: 'height', label: 'Height (Optional)', placeholder: 'height, h, ht, package height' },
+  { key: 'from_zip', label: 'Origin ZIP (Optional)', placeholder: 'origin zip, from zip, ship from' },
+  { key: 'to_zip', label: 'Destination ZIP (Optional)', placeholder: 'destination zip, dest zip, ship postal, postal code' },
+  { key: 'length', label: 'Length (Optional)', placeholder: 'length, l, dim1' },
+  { key: 'width', label: 'Width (Optional)', placeholder: 'width, w, dim2' },
+  { key: 'height', label: 'Height (Optional)', placeholder: 'height, h, dim3' },
   { key: 'zone', label: 'Zone (Optional)', placeholder: 'zone, shipping zone, delivery zone' },
-  { key: 'shipment_id', label: 'Shipment ID (Optional)', placeholder: 'shipment id, order id, tracking number, reference' },
-  { key: 'service_level', label: 'Service Level (Optional)', placeholder: 'service level, service type, delivery speed, priority' },
-  { key: 'package_type', label: 'Package Type (Optional)', placeholder: 'package type, box type, container type' }
+  { key: 'carrier', label: 'Carrier (Optional)', placeholder: 'carrier, shipper, shipping company' },
+  { key: 'service_level', label: 'Service Level (Optional)', placeholder: 'service level, service type, delivery speed' },
+  { key: 'package_type', label: 'Package Type (Optional)', placeholder: 'package type, box type, container type' },
+  { key: 'shipment_id', label: 'Shipment ID (Optional)', placeholder: 'shipment id, order id, tracking number, reference' }
 ];
+
+const normalizeMappingForColumns = (candidate: Record<string, string> | undefined | null, columns: string[]): ColumnMapping => {
+  const normalized: ColumnMapping = {};
+  if (!candidate) {
+    return normalized;
+  }
+  Object.entries(candidate).forEach(([key, value]) => {
+    if (value && columns.includes(value)) {
+      normalized[key as keyof ColumnMapping] = value;
+    }
+  });
+  return normalized;
+};
 
 export default function UploadPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const queryStep = searchParams.get('step');
+  const queryAnalysisId = searchParams.get('analysisId');
   const [currentStep, setCurrentStep] = useState<'upload' | 'mapping' | 'settings' | 'ready'>('upload');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [analysisId, setAnalysisId] = useState<string | null>(null);
   const [error, setError] = useState<string>('');
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
-  const [filePath, setFilePath] = useState<string>('');
+  const previousAnalysisId = useRef<string | null>(null);
   
   // Use the global settings store instead of local state
   const { settings, setSettings } = useAnalysisStore();
-  const [savedProfiles, setSavedProfiles] = useState<MappingProfile[]>([]);
+  const {
+    settings: userSettings,
+    isSettingsLoading: isUserSettingsLoading,
+    fetchSettings,
+    updateSettings: persistUserSettings,
+  } = useAuthStore();
+  const hasLoadedUserSettings = useRef(false);
+  const lastAppliedSettings = useRef<string | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<string>('');
+  const [isSavingDefaults, setIsSavingDefaults] = useState(false);
+  const {
+    profiles,
+    isLoading: profilesLoading,
+    fetchProfiles: loadProfiles,
+    createProfile,
+    deleteProfile: removeProfile,
+  } = useProfilesStore();
+  const hasLoadedProfiles = useRef(false);
   // Local state for UI (these will sync with global settings)
+
+  const hydrateExistingAnalysis = useCallback(async (id: string) => {
+    try {
+      const [details, analysis] = await Promise.all([
+        analysisAPI.getUploadDetails(id),
+        analysisAPI.getResults(id).catch(() => null),
+      ]);
+
+      setUploadResult({
+        analysisId: details.analysisId,
+        fileName: details.fileName,
+        fileSize: details.fileSize,
+        columns: details.columns,
+        suggestedMappings: details.suggestedMappings,
+        message: details.message,
+      });
+
+      const available = details.columns ?? [];
+      setAvailableColumns(available);
+      const suggested = normalizeMappingForColumns(details.suggestedMappings, available);
+      const existing =
+        analysis && analysis.columnMapping && Object.keys(analysis.columnMapping).length
+          ? normalizeMappingForColumns(analysis.columnMapping as Record<string, string>, available)
+          : suggested;
+      setColumnMapping(existing);
+      setSelectedProfile('');
+      setError('');
+    } catch (err) {
+      console.error('Failed to hydrate existing analysis', err);
+      setError('Unable to load existing analysis context. You may need to re-upload the file.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!hasLoadedUserSettings.current) {
+      fetchSettings().catch(() => {
+        /* ignore */
+      });
+      hasLoadedUserSettings.current = true;
+    }
+  }, [fetchSettings]);
+
+  useEffect(() => {
+    if (!userSettings) return;
+    const marker = userSettings.updatedAt ?? JSON.stringify(userSettings);
+    if (lastAppliedSettings.current === marker) {
+      return;
+    }
+    lastAppliedSettings.current = marker;
+
+    const current = useAnalysisStore.getState().settings;
+    const next = {
+      weightUnit: current.weightUnit || 'oz',
+      origin_zip: userSettings.originZip || current.origin_zip || '',
+      markupPct:
+        typeof userSettings.defaultMarkup === 'number'
+          ? userSettings.defaultMarkup / 100
+          : current.markupPct ?? 0.1,
+      fuelSurchargePct:
+        typeof userSettings.fuelSurcharge === 'number'
+          ? userSettings.fuelSurcharge / 100
+          : current.fuelSurchargePct ?? 0.16,
+      dimDivisor: userSettings.dimDivisor ?? current.dimDivisor ?? 139,
+      das_surcharge: userSettings.dasSurcharge ?? current.das_surcharge ?? 1.98,
+      edas_surcharge: userSettings.edasSurcharge ?? current.edas_surcharge ?? 3.92,
+      remote_surcharge: userSettings.remoteSurcharge ?? current.remote_surcharge ?? 14.15,
+    } as Partial<typeof current>;
+
+    const changed = Object.entries(next).some(([key, value]) => current[key as keyof typeof current] !== value);
+    if (!changed) {
+      return;
+    }
+
+    setSettings(next);
+  }, [userSettings, setSettings]);
+
+  useEffect(() => {
+    if (hasLoadedProfiles.current) return;
+    loadProfiles()
+      .then(() => {
+        hasLoadedProfiles.current = true;
+      })
+      .catch(() => {
+        hasLoadedProfiles.current = true;
+      });
+  }, [loadProfiles]);
+
+  useEffect(() => {
+    if (!queryAnalysisId) {
+      return;
+    }
+    if (previousAnalysisId.current === queryAnalysisId) {
+      return;
+    }
+    previousAnalysisId.current = queryAnalysisId;
+    setAnalysisId(queryAnalysisId);
+    hydrateExistingAnalysis(queryAnalysisId).catch(() => {
+      /* errors handled inside helper */
+    });
+  }, [queryAnalysisId, hydrateExistingAnalysis]);
+
+  useEffect(() => {
+    if (!queryStep) {
+      return;
+    }
+    if (queryStep === 'upload' || queryStep === 'mapping' || queryStep === 'settings' || queryStep === 'ready') {
+      setCurrentStep(queryStep);
+    }
+  }, [queryStep]);
+
+  useEffect(() => {
+    if (queryAnalysisId && !queryStep) {
+      setCurrentStep((prev) => (prev === 'upload' ? 'mapping' : prev));
+    }
+  }, [queryAnalysisId, queryStep]);
 
   // Helper function to find best match for column mapping
   const findBestMatch = (fieldKey: string, availableColumns: string[]): string => {
@@ -109,7 +250,7 @@ export default function UploadPage() {
     }
 
     // For destination_zip, look for ZIP-related fields
-    if (fieldKey === 'destination_zip') {
+    if (fieldKey === 'to_zip') {
       const zipMatches = availableColumns.filter(col => {
         const colLower = col.toLowerCase();
         return colLower.includes('zip') || 
@@ -124,8 +265,21 @@ export default function UploadPage() {
       }
     }
 
-    // For carrier_rate, look for cost/rate fields
-    if (fieldKey === 'carrier_rate') {
+    // For origin ZIP
+    if (fieldKey === 'from_zip') {
+      const originMatches = availableColumns.filter(col => {
+        const colLower = col.toLowerCase();
+        return (colLower.includes('origin') || colLower.includes('from')) &&
+               (colLower.includes('zip') || colLower.includes('postal') || colLower.includes('code'));
+      });
+
+      if (originMatches.length > 0) {
+        return originMatches[0];
+      }
+    }
+
+    // For rate, look for cost/rate fields
+    if (fieldKey === 'rate') {
       const costMatches = availableColumns.filter(col => {
         const colLower = col.toLowerCase();
         // Be more specific - avoid matching 'Carrier' field
@@ -167,57 +321,6 @@ export default function UploadPage() {
 
     return matches.length > 0 ? matches[0] : 'none';
   };
-
-  // Load saved profiles from localStorage on component mount
-  useEffect(() => {
-    const saved = localStorage.getItem('labl_iq_mapping_profiles');
-    if (saved) {
-      try {
-        const profiles = JSON.parse(saved);
-        setSavedProfiles(profiles);
-      } catch (e) {
-        console.error('Failed to load saved profiles:', e);
-      }
-    }
-
-    // Load saved upload data from sessionStorage
-    const savedUploadData = sessionStorage.getItem('labl_iq_upload_data');
-    if (savedUploadData) {
-      try {
-        const data = JSON.parse(savedUploadData);
-        if (data.filePath) {
-          setFilePath(data.filePath);
-          setAvailableColumns(data.columns || []);
-          setColumnMapping(data.columnMapping || {});
-          setUploadResult(data.uploadResult);
-          setCurrentStep(data.currentStep || 'upload');
-        }
-      } catch (e) {
-        console.error('Failed to load saved upload data:', e);
-      }
-    }
-  }, []);
-
-  // Save upload data to sessionStorage whenever it changes
-  useEffect(() => {
-    if (filePath || uploadResult || Object.keys(columnMapping).length > 0) {
-      const uploadData = {
-        filePath,
-        columns: availableColumns,
-        columnMapping,
-        uploadResult,
-        currentStep
-      };
-      sessionStorage.setItem('labl_iq_upload_data', JSON.stringify(uploadData));
-    }
-  }, [filePath, availableColumns, columnMapping, uploadResult, currentStep]);
-
-  // Save profiles to localStorage whenever they change
-  useEffect(() => {
-    if (savedProfiles.length > 0) {
-      localStorage.setItem('labl_iq_mapping_profiles', JSON.stringify(savedProfiles));
-    }
-  }, [savedProfiles]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -276,108 +379,38 @@ export default function UploadPage() {
     setUploadResult(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-
-      // Simulate progress
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return 90;
-          }
-          return prev + 10;
-        });
-      }, 200);
-
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
+      const result = await analysisAPI.upload(selectedFile, (progress) => {
+        setUploadProgress(progress);
       });
 
       setUploadProgress(100);
 
-      if (response.ok) {
-        const result = await response.json();
-        setUploadResult(result);
-        setFilePath(result.filePath || '');
-        
-        // Use actual columns from the API response
-        const columns = result.columns || [];
-        setAvailableColumns(columns);
-        
-        // Smart column mapping based on available columns
-        const suggestedMappings: ColumnMapping = {};
-        
-        // Find weight column (look for weight-related columns)
-        const weightColumn = columns.find((col: string) => 
-          col.toLowerCase().includes('weight') || 
-          col.toLowerCase().includes('wt') ||
-          col.toLowerCase().includes('oz') ||
-          col.toLowerCase().includes('lbs')
-        );
-        if (weightColumn) {
-          suggestedMappings.weight = weightColumn;
-        }
-        
-        // Find carrier rate column (look for cost/rate/fee columns)
-        const rateColumn = columns.find((col: string) => 
-          col.toLowerCase().includes('cost') || 
-          col.toLowerCase().includes('rate') ||
-          col.toLowerCase().includes('fee') ||
-          col.toLowerCase().includes('charge') ||
-          col.toLowerCase().includes('amount') ||
-          col.toLowerCase().includes('price')
-        );
-        if (rateColumn) {
-          suggestedMappings.carrier_rate = rateColumn;
-        }
-        
-        // Find zone column
-        const zoneColumn = columns.find((col: string) => 
-          col.toLowerCase().includes('zone')
-        );
-        if (zoneColumn) {
-          suggestedMappings.zone = zoneColumn;
-        }
-        
-        // Find destination ZIP column
-        const destZipColumn = columns.find((col: string) => 
-          col.toLowerCase().includes('zip') || 
-          col.toLowerCase().includes('postal') ||
-          col.toLowerCase().includes('destination') ||
-          col.toLowerCase().includes('dest') ||
-          col.toLowerCase().includes('ship postal') ||
-          col.toLowerCase().includes('shipping postal')
-        );
-        if (destZipColumn) {
-          suggestedMappings.dest_zip = destZipColumn;
-        }
-        
-        // Find origin ZIP column (same logic for now, can be enhanced later)
-        const origZipColumn = columns.find((col: string) => 
-          col.toLowerCase().includes('zip') || 
-          col.toLowerCase().includes('postal') ||
-          col.toLowerCase().includes('origin') ||
-          col.toLowerCase().includes('from') ||
-          col.toLowerCase().includes('ship postal') ||
-          col.toLowerCase().includes('shipping postal')
-        );
-        if (origZipColumn) {
-          suggestedMappings.orig_zip = origZipColumn;
-        }
-        
-        console.log('SMART MAPPING APPLIED:', suggestedMappings);
-        console.log('Available columns:', columns);
-        
-        setColumnMapping(suggestedMappings);
-        setCurrentStep('mapping');
-      } else {
-        const errorData = await response.json();
-        setError(errorData.error || 'Upload failed');
+      setAnalysisId(result.analysisId);
+      setUploadResult(result);
+
+      const columns = result.columns || [];
+      setAvailableColumns(columns);
+
+      let suggestedMappings = result.suggestedMappings || {};
+      if (!suggestedMappings || Object.keys(suggestedMappings).length === 0) {
+        suggestedMappings = {};
+        REQUIRED_FIELDS.concat(OPTIONAL_FIELDS).forEach(({ key }) => {
+          const match = findBestMatch(key, columns);
+          if (match !== 'none') {
+            suggestedMappings[key] = match;
+          }
+        });
       }
+
+      setColumnMapping(suggestedMappings);
+      setCurrentStep('mapping');
     } catch (err) {
-      setError('Upload failed. Please try again.');
+      console.error('Upload failed', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Upload failed. Please ensure you are logged in and try again.'
+      );
     } finally {
       setIsUploading(false);
     }
@@ -390,10 +423,8 @@ export default function UploadPage() {
     setUploadProgress(0);
     setColumnMapping({});
     setAvailableColumns([]);
-    setFilePath('');
+    setAnalysisId(null);
     setCurrentStep('upload');
-    // Clear saved data from sessionStorage
-    sessionStorage.removeItem('labl_iq_upload_data');
   };
 
   const clearSavedData = () => {
@@ -401,10 +432,8 @@ export default function UploadPage() {
     setUploadResult(null);
     setColumnMapping({});
     setAvailableColumns([]);
-    setFilePath('');
+    setAnalysisId(null);
     setCurrentStep('upload');
-    // Clear session storage
-    sessionStorage.removeItem('labl_iq_upload_data');
   };
 
   const resetColumnMapping = () => {
@@ -434,14 +463,13 @@ export default function UploadPage() {
         suggestedMappings.weight = 'Weight';
       }
       if (availableColumns.includes('Carrier Fee')) {
-        suggestedMappings.carrier_rate = 'Carrier Fee';
+        suggestedMappings.rate = 'Carrier Fee';
       }
       if (availableColumns.includes('Zone')) {
         suggestedMappings.zone = 'Zone';
       }
       if (availableColumns.includes('Ship Postal Code')) {
-        suggestedMappings.dest_zip = 'Ship Postal Code';
-        suggestedMappings.orig_zip = 'Ship Postal Code';
+        suggestedMappings.to_zip = 'Ship Postal Code';
       }
       
       setColumnMapping(suggestedMappings);
@@ -465,23 +493,29 @@ export default function UploadPage() {
     }
   };
 
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
+    if (!columnMapping || Object.keys(columnMapping).length === 0) {
+      toast.error('Map at least one column before saving a profile');
+      return;
+    }
     const profileName = prompt('Enter a name for this mapping profile:');
-    if (profileName && Object.keys(columnMapping).length > 0) {
-      const newProfile: MappingProfile = {
-        id: Date.now().toString(),
+    if (!profileName) return;
+
+    try {
+      const newProfile = await createProfile({
         name: profileName,
         mapping: { ...columnMapping },
-        createdAt: new Date()
-      };
-      
-      setSavedProfiles(prev => [...prev, newProfile]);
-      alert(`Profile "${profileName}" saved successfully!`);
+      });
+      setSelectedProfile(newProfile.id);
+      toast.success(`Profile "${profileName}" saved`);
+    } catch (error) {
+      console.error('Failed to save profile', error);
+      toast.error('Failed to save profile');
     }
   };
 
   const handleLoadProfile = (profileId: string) => {
-    const profile = savedProfiles.find(p => p.id === profileId);
+    const profile = profiles.find(p => p.id === profileId);
     if (profile) {
       setColumnMapping(profile.mapping);
       setSelectedProfile(profileId);
@@ -489,48 +523,138 @@ export default function UploadPage() {
   };
 
   const handleDeleteProfile = (profileId: string) => {
-    if (confirm('Are you sure you want to delete this profile?')) {
-      setSavedProfiles(prev => prev.filter(p => p.id !== profileId));
-      if (selectedProfile === profileId) {
-        setSelectedProfile('');
+    if (!confirm('Are you sure you want to delete this profile?')) return;
+    removeProfile(profileId)
+      .then(() => {
+        if (selectedProfile === profileId) {
+          setSelectedProfile('');
+        }
+        toast.success('Profile deleted');
+      })
+      .catch((error) => {
+        console.error('Failed to delete profile', error);
+        toast.error('Failed to delete profile');
+      });
+  };
+
+  const handleContinueToSettings = async () => {
+    if (!analysisId) {
+      setError('No analysis ID found. Please upload a file first.');
+      return;
+    }
+
+    // Ensure required mappings are provided
+    for (const field of REQUIRED_FIELDS) {
+      if (!columnMapping[field.key]) {
+        setError(`Please map a column for ${field.label}.`);
+        return;
       }
+    }
+
+    try {
+      setError('');
+      await analysisAPI.mapColumns(analysisId, columnMapping);
+      setCurrentStep('settings');
+    } catch (err) {
+      console.error('Column mapping failed', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'Failed to map columns. Ensure you are authenticated and try again.'
+      );
     }
   };
 
-  const handleContinueToSettings = () => {
-    setCurrentStep('settings');
-  };
-
   const handleContinueToAnalysis = () => {
+    if (!analysisId) {
+      setError('Upload and map your file before continuing to analysis.');
+      return;
+    }
+    setError('');
     setCurrentStep('ready');
   };
 
-const handleRunAnalysis = () => {
-  const { setMapping, setSettings } = useAnalysisStore.getState();
-  
-  // Store mapping and settings in Zustand
-  setMapping({
-    weight: 'Weight',
-    carrier_rate: 'Carrier Fee', // This will need to be added to your CSV
-    zone: 'Zone', // This will need to be added to your CSV
-    dest_zip: 'Ship Postal Code', // Use the actual column name from your CSV
-    orig_zip: 'Ship Postal Code', // Use the same column for both since it's the destination
-  });
-  
-  setSettings({
-    weightUnit: settings.weightUnit,
-    fuelSurchargePct: settings.fuelSurchargePct,
-    markupPct: settings.markupPct,
-    dimDivisor: settings.dimDivisor,
-  });
+  const handleSaveDefaults = async () => {
+    if (isSavingDefaults || isUserSettingsLoading) return;
+    try {
+      setIsSavingDefaults(true);
+      await persistUserSettings({
+        originZip: settings.origin_zip,
+        defaultMarkup: typeof settings.markupPct === 'number' ? settings.markupPct * 100 : undefined,
+        fuelSurcharge: typeof settings.fuelSurchargePct === 'number' ? settings.fuelSurchargePct * 100 : undefined,
+        dasSurcharge: settings.das_surcharge,
+        edasSurcharge: settings.edas_surcharge,
+        remoteSurcharge: settings.remote_surcharge,
+        dimDivisor: settings.dimDivisor,
+      });
+      toast.success('Default settings saved');
+    } catch (err) {
+      console.error('Failed to save default settings', err);
+      toast.error('Failed to save default settings');
+    } finally {
+      setIsSavingDefaults(false);
+    }
+  };
 
-  // Navigate to analysis page with only the fileId
-  const params = new URLSearchParams({
-    uploaded: 'true',
-    fileId: uploadResult?.fileId || '', // Use fileId instead of filePath
-  });
-  router.push(`/analysis?${params.toString()}`);
-};
+  const handleRunAnalysis = async () => {
+    if (!analysisId) {
+      setError('No analysis ID found. Please upload and map your file first.');
+      return;
+    }
+
+    setIsAnalyzing(true);
+
+    const { setSettings, loadHistory } = useAnalysisStore.getState();
+
+    const completeSettings = {
+      weightUnit: settings.weightUnit,
+      fuelSurchargePct: settings.fuelSurchargePct,
+      markupPct: settings.markupPct,
+      dimDivisor: settings.dimDivisor,
+      minMargin: settings.minMargin,
+      merchant: settings.merchant,
+      origin_zip: settings.origin_zip,
+      das_surcharge: settings.das_surcharge ?? settings.dasSurcharge ?? 1.98,
+      edas_surcharge: settings.edas_surcharge ?? settings.edasSurcharge ?? 3.92,
+      remote_surcharge: settings.remote_surcharge ?? settings.remoteSurcharge ?? 14.15,
+      serviceLevel: (settings as any).serviceLevel || 'standard',
+    } as any;
+    setSettings(completeSettings);
+
+    try {
+      setError('');
+
+      const markupPercent = typeof completeSettings.markupPct === 'number'
+        ? completeSettings.markupPct * 100
+        : undefined;
+      const fuelSurcharge = typeof completeSettings.fuelSurchargePct === 'number'
+        ? completeSettings.fuelSurchargePct * 100
+        : undefined;
+
+      await analysisAPI.process(analysisId, {
+        amazonRate: 0.5,
+        fuelSurcharge,
+        markupPercent,
+        serviceLevel: completeSettings.serviceLevel || 'standard',
+        useAdvancedSettings: true,
+      });
+
+      if (completeSettings.merchant !== undefined) {
+        await analysisAPI.updateMetadata(analysisId, { merchant: completeSettings.merchant || undefined });
+      }
+
+      await loadHistory().catch(() => {});
+      router.push(`/analysis/${analysisId}`);
+    } catch (error) {
+      console.error('Analysis failed:', error);
+      const message = error instanceof Error
+        ? error.message
+        : 'Analysis failed. Please ensure you are authenticated and try again.';
+      setError(message);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
   const renderUploadStep = () => (
     <Card>
       <CardHeader>
@@ -642,13 +766,13 @@ const handleRunAnalysis = () => {
             <span>Step 2: Map Your Columns</span>
           </div>
           <div className="flex items-center space-x-2">
-            {savedProfiles.length > 0 && (
+            {profiles.length > 0 && (
               <Select value={selectedProfile} onValueChange={handleLoadProfile}>
                 <SelectTrigger className="w-48">
                   <SelectValue placeholder="Load saved profile" />
                 </SelectTrigger>
                 <SelectContent>
-                  {savedProfiles.map((profile) => (
+                  {profiles.map((profile) => (
                     <SelectItem key={profile.id} value={profile.id}>
                       {profile.name}
                     </SelectItem>
@@ -665,11 +789,15 @@ const handleRunAnalysis = () => {
       <CardContent>
         <div className="space-y-6">
           {/* Saved Profiles Display */}
-          {savedProfiles.length > 0 && (
+          {profilesLoading ? (
+            <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-500">
+              Loading saved profiles…
+            </div>
+          ) : profiles.length > 0 ? (
             <div className="bg-gray-50 p-4 rounded-lg">
               <h4 className="font-medium text-gray-900 mb-2">Saved Mapping Profiles</h4>
               <div className="flex flex-wrap gap-2">
-                {savedProfiles.map((profile) => (
+                {profiles.map((profile) => (
                   <div key={profile.id} className="flex items-center space-x-2 bg-white px-3 py-2 rounded-md border">
                     <span className="text-sm font-medium">{profile.name}</span>
                     <Button
@@ -692,7 +820,7 @@ const handleRunAnalysis = () => {
                 ))}
               </div>
             </div>
-          )}
+          ) : null}
 
           {/* Column Mapping */}
           <div className="space-y-6">
@@ -800,6 +928,18 @@ const handleRunAnalysis = () => {
         <div className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
+              <Label htmlFor="originZip">Origin ZIP</Label>
+              <input
+                type="text"
+                id="originZip"
+                value={settings.origin_zip || ''}
+                onChange={(e) => setSettings({ origin_zip: e.target.value })}
+                maxLength={10}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500">Default origin ZIP for surcharge calculations</p>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="weightUnit">Weight Unit</Label>
               <Select value={settings.weightUnit} onValueChange={(value) => setSettings({ weightUnit: value as any })}>
                 <SelectTrigger>
@@ -858,17 +998,49 @@ const handleRunAnalysis = () => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="merchant">Merchant Name</Label>
+              <input
+                type="text"
+                id="merchant"
+                value={settings.merchant || ''}
+                onChange={(e) => setSettings({ merchant: e.target.value })}
+                placeholder="Enter merchant name (optional)"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500">
+                Name of the merchant for this analysis
+              </p>
+            </div>
           </div>
 
-          <div className="flex justify-end space-x-3">
-            <Button variant="outline" onClick={() => setCurrentStep('mapping')}>
-              Back
+          <div className="flex flex-wrap justify-between gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleSaveDefaults}
+              disabled={isSavingDefaults || isUserSettingsLoading}
+            >
+              {isSavingDefaults ? 'Saving…' : 'Save as Default'}
             </Button>
-            <Button variant="black" onClick={handleContinueToAnalysis}>
-              Continue to Analysis
-              <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => setCurrentStep('mapping')}>
+                Back
+              </Button>
+              <Button variant="black" onClick={handleContinueToAnalysis}>
+                Continue to Analysis
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           </div>
+
+          {isUserSettingsLoading ? (
+            <p className="text-xs text-gray-500">Loading your saved defaults…</p>
+          ) : null}
+
+          <p className="text-xs text-gray-400">
+            Changes made here apply to this analysis. Use “Save as Default” to persist your preferences for future uploads.
+          </p>
         </div>
       </CardContent>
     </Card>
@@ -902,18 +1074,24 @@ const handleRunAnalysis = () => {
                 <span className="ml-2 font-medium">{selectedFile?.name}</span>
               </div>
               <div>
-                <span className="text-gray-600">Records:</span>
-                <span className="ml-2 font-medium">{uploadResult?.recordCount || 'Unknown'}</span>
+                <span className="text-gray-600">File size:</span>
+                <span className="ml-2 font-medium">
+                  {uploadResult?.fileSize ? `${(uploadResult.fileSize / 1024 / 1024).toFixed(2)} MB` : 'Unknown'}
+                </span>
               </div>
               <div>
                 <span className="text-gray-600">Columns:</span>
                 <span className="ml-2 font-medium">{availableColumns.length}</span>
               </div>
+             <div>
+               <span className="text-gray-600">Mapped Fields:</span>
+               <span className="ml-2 font-medium">
+                 {Object.keys(columnMapping).filter(key => columnMapping[key]).length}
+               </span>
+             </div>
               <div>
-                <span className="text-gray-600">Mapped Fields:</span>
-                <span className="ml-2 font-medium">
-                  {Object.keys(columnMapping).filter(key => columnMapping[key]).length}
-                </span>
+                <span className="text-gray-600">Analysis ID:</span>
+                <span className="ml-2 font-medium">{analysisId || 'Pending'}</span>
               </div>
             </div>
           </div>
@@ -922,9 +1100,18 @@ const handleRunAnalysis = () => {
             <Button variant="outline" onClick={() => setCurrentStep('settings')}>
               Back
             </Button>
-            <Button variant="black" onClick={handleRunAnalysis}>
-              Run Analysis
-              <ArrowRight className="ml-2 h-4 w-4" />
+            <Button variant="black" onClick={handleRunAnalysis} disabled={isAnalyzing || !analysisId}>
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Running Analysis...
+                </>
+              ) : (
+                <>
+                  Run Analysis
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </>
+              )}
             </Button>
           </div>
         </div>

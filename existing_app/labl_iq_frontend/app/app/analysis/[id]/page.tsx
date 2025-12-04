@@ -1,179 +1,306 @@
-
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/card';
-import { Button } from '../../../components/ui/button';
-import { Badge } from '../../../components/ui/badge';
-import { FileText, Download, ArrowLeft, TrendingUp, DollarSign } from 'lucide-react';
-import { useRouter } from 'next/navigation';
-import toast from 'react-hot-toast';
+import { useEffect, useMemo } from 'react';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
 
-export default function AnalysisDetailPage() {
-  const params = useParams();
-  const router = useRouter();
-  const [analysis, setAnalysis] = useState<any>(null);
-  const [isLoading, setIsLoading] = useState(true);
+import ToolbarClient from './ToolbarClient';
+import ResultTableClient from './results-table-client';
+import { useAnalysisStore } from '../../../hooks/useAnalysisStore';
+import { Card, CardContent } from '../../../components/ui/card';
+
+const Plot = dynamic(() => import('react-plotly.js'), { ssr: false });
+
+type PlotFigure = {
+  data: any[];
+  layout: Record<string, any>;
+  config?: Record<string, any>;
+};
+
+export default function AnalysisDetail({ params }: { params: { id: string } }) {
+  const loadAnalysis = useAnalysisStore((state) => state.loadAnalysis);
+  const current = useAnalysisStore((state) => state.current);
+  const isLoading = useAnalysisStore((state) => state.isLoading);
 
   useEffect(() => {
-    // Mock data for testing
-    const mockAnalysis = {
-      id: params.id,
-      name: 'Amazon Shipping Analysis',
-      status: 'completed',
-      createdAt: new Date('2024-01-15'),
-      records: 1250,
-      totalSavings: 2340.50,
-      results: [
-        { zone: 'Zone 2', count: 150, savings: 450.25 },
-        { zone: 'Zone 3', count: 200, savings: 680.75 },
-        { zone: 'Zone 4', count: 300, savings: 890.50 },
-        { zone: 'Zone 5', count: 400, savings: 1200.00 },
-        { zone: 'Zone 6', count: 200, savings: 750.00 }
-      ]
-    };
-    
-    setTimeout(() => {
-      setAnalysis(mockAnalysis);
-      setIsLoading(false);
-    }, 1000);
-  }, [params.id]);
+    loadAnalysis(params.id).catch((error) => {
+      console.error('Failed to load analysis', error);
+    });
+  }, [params.id, loadAnalysis]);
 
-  const handleDownload = (format: string) => {
-    toast.success(`Downloading ${format.toUpperCase()} report...`);
-  };
+  const summary = current?.summary || {};
+  const settings = current?.settings || {};
+  const results = current?.results || [];
+  const totalResults = current?.totalResults ?? summary.total_packages ?? summary.total_shipments ?? results.length;
+  const previewCount = current?.previewCount ?? results.length;
+  const moreResultsAvailable = totalResults > previewCount;
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-      </div>
-    );
+  const totalSavings = Number(summary.total_savings ?? 0);
+  const percentSavings = Number(summary.percent_savings ?? 0);
+  const totalCurrentCost = Number(summary.total_current_cost ?? 0);
+  const totalAmazonCost = Number(summary.total_amazon_cost ?? 0);
+  const avgSavingsPerShipment = totalResults > 0 ? totalSavings / Math.max(totalResults, 1) : 0;
+
+  const summaryCards = [
+    { label: 'Total Shipments', value: totalResults, format: 'number' as const },
+    { label: 'Previewed Rows', value: previewCount, format: 'number' as const },
+    { label: 'Total Savings', value: totalSavings, format: 'currency' as const },
+    { label: 'Avg Savings / Shipment', value: avgSavingsPerShipment, format: 'currency' as const },
+    { label: 'Percent Savings', value: percentSavings, format: 'percent' as const },
+    { label: 'Current → Amazon', value: `${formatCurrency(totalCurrentCost)} → ${formatCurrency(totalAmazonCost)}` },
+  ];
+
+  const settingsEntries = [
+    { label: 'Markup percent', value: settings.markup_percent ?? settings.markupPct ?? settings.markupPercentage },
+    { label: 'Fuel surcharge %', value: settings.fuel_surcharge_percent ?? settings.fuelSurchargePct },
+    { label: 'Service level', value: settings.serviceLevel || current?.status || 'standard' },
+    { label: 'Origin ZIP', value: settings.origin_zip ?? settings.originZip },
+    { label: 'DAS surcharge', value: settings.das_surcharge, format: 'currency' },
+    { label: 'eDAS surcharge', value: settings.edas_surcharge, format: 'currency' },
+    { label: 'Remote surcharge', value: settings.remote_surcharge, format: 'currency' },
+    { label: 'Dim divisor', value: settings.dim_divisor ?? settings.dimDivisor },
+  ];
+
+  const visualizations = current?.visualizations || {};
+  const zoneVisualization = useMemo(() => parsePlotFigure(visualizations.zone_fig), [visualizations.zone_fig]);
+  const weightVisualization = useMemo(() => parsePlotFigure(visualizations.weight_fig), [visualizations.weight_fig]);
+  const surchargeVisualization = useMemo(() => parsePlotFigure(visualizations.surcharge_fig), [visualizations.surcharge_fig]);
+
+  const zoneTable = (visualizations.zone_table as any[] | undefined) ?? [];
+  const weightTable = (visualizations.weight_table as any[] | undefined) ?? [];
+  const surchargeTable = (visualizations.surcharge_table as any[] | undefined) ?? [];
+
+  if (isLoading && !current) {
+    return <div className="p-6 text-sm text-gray-600">Loading analysis…</div>;
   }
 
-  if (!analysis) {
+  if (!current) {
     return (
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="text-center py-12">
-          <FileText className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl font-medium text-gray-900 mb-2">
-            Analysis not found
-          </h3>
-          <p className="text-gray-500 mb-6">
-            The requested analysis could not be found.
-          </p>
-          <Button variant="black" onClick={() => router.push('/dashboard')}>
-            Back to Dashboard
-          </Button>
-        </div>
+      <div className="p-6">
+        <div className="text-lg mb-4">Analysis not found.</div>
+        <Link href="/analysis" className="underline text-sm">
+          Back to analyses
+        </Link>
       </div>
     );
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
-      <div className="mb-8">
-        <Button
-          variant="ghost"
-          onClick={() => router.push('/history')}
-          className="mb-4"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to History
-        </Button>
-        
-        <div className="flex justify-between items-start">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">{analysis.name}</h1>
-            <p className="text-gray-600">
-              Analysis completed on {analysis.createdAt.toLocaleDateString()}
-            </p>
-          </div>
-          <div className="flex space-x-2">
-            <Button variant="black" onClick={() => handleDownload('csv')}>
-              <Download className="h-4 w-4 mr-2" />
-              Export CSV
-            </Button>
-            <Button variant="black" onClick={() => handleDownload('excel')}>
-              <Download className="h-4 w-4 mr-2" />
-              Export Excel
-            </Button>
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs text-gray-500 uppercase tracking-wide">Analysis</div>
+          <div className="text-xl font-semibold">{current.filename || current.id}</div>
+          <div className="text-sm text-gray-600">
+            {new Date(current.timestamp).toLocaleString()}
+            {current.merchant ? (
+              <>
+                {' '}
+                • Merchant <span className="font-medium">{current.merchant}</span>
+              </>
+            ) : null}
+            {current.title ? <>
+              {' '}
+              • {current.title}
+            </> : null}
+            {(current.tags || []).length ? <>
+              {' '}
+              • {(current.tags || []).join(', ')}
+            </> : null}
           </div>
         </div>
+        <Link href="/analysis" className="underline text-sm">
+          Back
+        </Link>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-3 mb-8">
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center space-x-2">
-              <FileText className="h-8 w-8 text-blue-600" />
-              <div>
-                <p className="text-2xl font-bold text-gray-900">
-                  {analysis.records.toLocaleString()}
-                </p>
-                <p className="text-sm text-gray-600">Records Processed</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <ToolbarClient analysis={current} />
 
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center space-x-2">
-              <TrendingUp className="h-8 w-8 text-green-600" />
-              <div>
-                <p className="text-2xl font-bold text-gray-900">
-                  ${analysis.totalSavings.toFixed(2)}
-                </p>
-                <p className="text-sm text-gray-600">Total Savings</p>
+      <section className="grid gap-4 lg:grid-cols-3">
+        {summaryCards.map((card) => (
+          <Card key={card.label} className="border bg-white shadow-sm">
+            <CardContent className="p-4">
+              <div className="text-xs uppercase text-gray-500 tracking-wide">{card.label}</div>
+              <div className="mt-2 text-2xl font-semibold text-gray-900">
+                {'format' in card && card.format === 'currency'
+                  ? formatCurrency(Number(card.value))
+                  : 'format' in card && card.format === 'percent'
+                  ? formatPercent(Number(card.value))
+                  : 'format' in card && card.format === 'number'
+                  ? formatNumber(Number(card.value))
+                  : String(card.value)}
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
 
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex items-center space-x-2">
-              <DollarSign className="h-8 w-8 text-purple-600" />
-              <div>
-                <p className="text-2xl font-bold text-gray-900">
-                  ${(analysis.totalSavings / analysis.records).toFixed(2)}
-                </p>
-                <p className="text-sm text-gray-600">Avg. Savings/Record</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Results by Zone</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {analysis.results.map((result: any, index: number) => (
-              <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center space-x-4">
-                  <Badge variant="secondary">{result.zone}</Badge>
-                  <span className="text-sm text-gray-600">
-                    {result.count} records
-                  </span>
+      <section className="grid gap-4 lg:grid-cols-3">
+        <Card className="bg-white shadow-sm border">
+          <CardContent className="p-4 space-y-4">
+            <h3 className="text-sm font-semibold text-gray-700">Settings Snapshot</h3>
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              {settingsEntries.map((entry) => (
+                <div key={entry.label} className="space-y-1">
+                  <dt className="text-xs uppercase text-gray-500 tracking-wide">{entry.label}</dt>
+                  <dd className="font-medium text-gray-900">{formatDisplayValue(entry)}</dd>
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold text-green-600">
-                    ${result.savings.toFixed(2)}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {((result.savings / analysis.totalSavings) * 100).toFixed(1)}% of total
-                  </p>
-                </div>
+              ))}
+            </dl>
+          </CardContent>
+        </Card>
+
+        <VisualizationCard
+          title="Zone Analysis"
+          figure={zoneVisualization}
+          table={zoneTable}
+          emptyMessage="Zone data not available for this analysis."
+        />
+
+        <VisualizationCard
+          title="Weight Distribution"
+          figure={weightVisualization}
+          table={weightTable}
+          emptyMessage="Weight data not available for this analysis."
+        />
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-3">
+        <VisualizationCard
+          title="Surcharge Impact"
+          figure={surchargeVisualization}
+          table={surchargeTable}
+          emptyMessage="No surcharge data available for this analysis."
+        />
+
+        <Card className="lg:col-span-2 bg-white shadow-sm border">
+          <CardContent className="p-4 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-gray-700">Shipment Results Preview</h3>
+              <div className="text-xs text-gray-500">
+                Showing {formatNumber(previewCount)} of {formatNumber(totalResults)} shipments
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+            </div>
+            {moreResultsAvailable ? (
+              <p className="text-xs text-amber-600">
+                Only the first {formatNumber(previewCount)} rows are displayed for performance. Use filters or export for the complete dataset.
+              </p>
+            ) : null}
+            {results.length === 0 ? (
+              <div className="text-sm text-gray-600">No shipment results available for this analysis.</div>
+            ) : (
+              <ResultTableClient rows={results} />
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
+}
+
+function formatCurrency(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  return `$${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatPercent(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  return `${value.toFixed(2)}%`;
+}
+
+function formatNumber(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  return value.toLocaleString();
+}
+
+function formatDisplayValue(entry: { value: any; format?: 'currency' | 'percent' }) {
+  if (entry.value == null) return '—';
+  if (entry.format === 'currency') return formatCurrency(Number(entry.value));
+  if (entry.format === 'percent') return formatPercent(Number(entry.value));
+  return String(entry.value);
+}
+
+type VisualizationCardProps = {
+  title: string;
+  figure: PlotFigure | null;
+  table: Record<string, any>[];
+  emptyMessage: string;
+};
+
+function VisualizationCard({ title, figure, table, emptyMessage }: VisualizationCardProps) {
+  const hasFigure = Boolean(figure && figure.data && figure.data.length);
+  const hasTable = table && table.length > 0;
+
+  if (!hasFigure && !hasTable) {
+    return (
+      <Card className="bg-white shadow-sm border">
+        <CardContent className="p-4 text-sm text-gray-600">
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">{title}</h3>
+          {emptyMessage}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="bg-white shadow-sm border">
+      <CardContent className="p-4 space-y-4">
+        <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
+        {hasFigure ? (
+          <div className="w-full overflow-hidden rounded-lg border">
+            <Plot
+              data={figure!.data}
+              layout={{ ...figure!.layout, autosize: true, height: 360 }}
+              config={{ displayModeBar: false, responsive: true }}
+              style={{ width: '100%', height: '100%' }}
+            />
+          </div>
+        ) : null}
+        {hasTable ? (
+          <div className="border rounded-md overflow-auto">
+            <table className="min-w-full text-xs">
+              <thead className="bg-gray-50 text-gray-600 uppercase tracking-wide">
+                <tr>
+                  {Object.keys(table[0]).map((key) => (
+                    <th key={key} className="px-3 py-2 text-left">
+                      {key}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {table.slice(0, 8).map((row, rowIndex) => (
+                  <tr key={rowIndex} className="border-t">
+                    {Object.keys(table[0]).map((key) => (
+                      <td key={key} className="px-3 py-2">
+                        {typeof row[key] === 'number' ? formatNumberCell(row[key]) : String(row[key])}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function formatNumberCell(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  return value % 1 === 0 ? value.toLocaleString() : value.toFixed(2);
+}
+
+function parsePlotFigure(fig: any): PlotFigure | null {
+  if (!fig) return null;
+  if (typeof fig === 'string') {
+    try {
+      return JSON.parse(fig);
+    } catch (error) {
+      console.error('Failed to parse Plotly figure', error);
+      return null;
+    }
+  }
+  return fig;
 }

@@ -16,9 +16,10 @@ import { Badge } from '../ui/badge';
 
 interface HeaderProps {
   onMenuToggle?: () => void;
+  onAssistantOpen?: () => void;
 }
 
-export function Header({ onMenuToggle }: HeaderProps) {
+export function Header({ onMenuToggle, onAssistantOpen }: HeaderProps) {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   const currentDate = new Date().toLocaleDateString('en-US', {
@@ -96,6 +97,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
             variant="ghost"
             size="sm"
             className="p-2 hover:bg-gray-100 text-gray-700"
+            onClick={onAssistantOpen}
           >
             <Bot className="h-5 w-5" />
           </Button>

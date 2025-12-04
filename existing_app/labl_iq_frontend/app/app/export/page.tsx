@@ -1,231 +1,102 @@
 'use client';
 
-import { useState } from 'react';
-import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select';
-import { Label } from '../../components/ui/label';
-import { Badge } from '../../components/ui/badge';
-import { Download, FileText, Settings, Calendar, DollarSign } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { saveAs } from 'file-saver';
 
-interface ExportTemplate {
-  id: string;
-  name: string;
-  description: string;
-  type: 'rate_sheet' | 'analysis_report' | 'data_export';
-  format: 'csv' | 'excel' | 'pdf';
-  lastUsed?: string;
-}
+import { useAnalysisStore } from '../../hooks/useAnalysisStore';
+import { analysisAPI } from '../../lib/api';
 
 export default function ExportPage() {
-  const [selectedTemplate, setSelectedTemplate] = useState<string>('');
-  const [selectedFormat, setSelectedFormat] = useState<string>('excel');
-  const [isExporting, setIsExporting] = useState(false);
+  const params = useSearchParams();
+  const initialId = params.get('analysis') || '';
+  const analyses = useAnalysisStore((state) => state.analyses);
+  const current = useAnalysisStore((state) => state.current);
+  const loadHistory = useAnalysisStore((state) => state.loadHistory);
+  const loadAnalysis = useAnalysisStore((state) => state.loadAnalysis);
+  const [selected, setSelected] = useState(initialId);
+  const [exporting, setExporting] = useState<'excel' | 'csv' | 'pdf' | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const exportTemplates: ExportTemplate[] = [
-    {
-      id: 'rate_sheet',
-      name: 'Rate Sheet',
-      description: 'Generate a comprehensive rate sheet for merchants',
-      type: 'rate_sheet',
-      format: 'excel',
-      lastUsed: '2024-01-15'
-    },
-    {
-      id: 'analysis_report',
-      name: 'Analysis Report',
-      description: 'Export detailed analysis results and savings breakdown',
-      type: 'analysis_report',
-      format: 'pdf',
-      lastUsed: '2024-01-10'
-    },
-    {
-      id: 'data_export',
-      name: 'Data Export',
-      description: 'Export raw data with calculated rates and savings',
-      type: 'data_export',
-      format: 'csv',
-      lastUsed: '2024-01-05'
+  useEffect(() => {
+    loadHistory({ limit: 100 }).catch(() => {});
+    if (initialId) loadAnalysis(initialId).catch(() => {});
+  }, [initialId, loadHistory, loadAnalysis]);
+
+  const chosen = useMemo(() => {
+    if (current && current.id === selected) return current as any;
+    return null;
+  }, [current, selected]);
+
+  useEffect(() => {
+    if (selected) loadAnalysis(selected).catch(() => {});
+  }, [selected, loadAnalysis]);
+
+  const onExport = async (format: 'excel' | 'csv' | 'pdf') => {
+    if (!chosen) return;
+    setExporting(format);
+    setError(null);
+    try {
+      const { blob, filename } = await analysisAPI.exportAnalysis(chosen.id, format);
+      saveAs(blob, filename);
+    } catch (err) {
+      console.error(`Failed to export ${format}`, err);
+      setError('Export failed. Please retry once the analysis has finished processing.');
+    } finally {
+      setExporting(null);
     }
-  ];
-
-  const handleExport = async () => {
-    if (!selectedTemplate) return;
-    
-    setIsExporting(true);
-    
-    // Simulate export process
-    setTimeout(() => {
-      setIsExporting(false);
-      // In a real app, this would trigger the actual export
-      alert('Export completed! Your file should download shortly.');
-    }, 2000);
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Export Rate Sheet</h1>
-          <p className="text-gray-600 mt-2">Generate and export rate sheets, reports, and data</p>
-        </div>
+    <div className="p-6 space-y-4">
+      <div className="text-xl">Export</div>
 
-        {/* Export Templates */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          {exportTemplates.map((template) => (
-            <Card 
-              key={template.id} 
-              className={`cursor-pointer transition-all hover:shadow-lg ${
-                selectedTemplate === template.id ? 'ring-2 ring-blue-500' : ''
-              }`}
-              onClick={() => setSelectedTemplate(template.id)}
-            >
-              <CardContent className="p-6">
-                <div className="flex items-center space-x-3 mb-3">
-                  <div className="p-2 rounded-full bg-blue-100">
-                    <FileText className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-gray-900">{template.name}</h3>
-                    <Badge variant="outline" className="text-xs">
-                      {template.format.toUpperCase()}
-                    </Badge>
-                  </div>
-                </div>
-                <p className="text-sm text-gray-600 mb-3">{template.description}</p>
-                {template.lastUsed && (
-                  <p className="text-xs text-gray-500">
-                    Last used: {new Date(template.lastUsed).toLocaleDateString()}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+      <div className="flex items-center gap-2">
+        <select className="border rounded px-2 py-1 min-w-[360px]" value={selected} onChange={(e) => setSelected(e.target.value)}>
+          <option value="">Select analysis…</option>
+          {analyses.map((a: any) => (
+            <option key={a.id} value={a.id}>
+              {a.timestamp?.slice(0, 16)} • {a.filename || a.id}{a.merchant ? ` • ${a.merchant}` : ''}
+            </option>
           ))}
-        </div>
-
-        {/* Export Configuration */}
-        {selectedTemplate && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Settings className="h-5 w-5" />
-                <span>Export Configuration</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="format">Export Format</Label>
-                    <Select value={selectedFormat} onValueChange={setSelectedFormat}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select format" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="excel">Excel (.xlsx)</SelectItem>
-                        <SelectItem value="csv">CSV (.csv)</SelectItem>
-                        <SelectItem value="pdf">PDF (.pdf)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="date-range">Date Range</Label>
-                    <Select defaultValue="last_30_days">
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select date range" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="last_7_days">Last 7 days</SelectItem>
-                        <SelectItem value="last_30_days">Last 30 days</SelectItem>
-                        <SelectItem value="last_90_days">Last 90 days</SelectItem>
-                        <SelectItem value="custom">Custom range</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Include Options</Label>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <label className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <span className="text-sm">Rate calculations</span>
-                    </label>
-                    <label className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <span className="text-sm">Savings analysis</span>
-                    </label>
-                    <label className="flex items-center space-x-2">
-                      <input type="checkbox" defaultChecked className="rounded" />
-                      <span className="text-sm">Carrier comparisons</span>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="flex justify-end space-x-3">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setSelectedTemplate('')}
-                  >
-                    Cancel
-                  </Button>
-                  <Button 
-                    variant="black" 
-                    onClick={handleExport}
-                    disabled={isExporting}
-                  >
-                    {isExporting ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                        Exporting...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="h-4 w-4 mr-2" />
-                        Export
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Recent Exports */}
-        <Card className="mt-8">
-          <CardHeader>
-            <CardTitle>Recent Exports</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {exportTemplates.slice(0, 3).map((template) => (
-                <div key={template.id} className="flex items-center justify-between p-4 border rounded-lg">
-                  <div className="flex items-center space-x-4">
-                    <div className="p-2 rounded-full bg-gray-100">
-                      <FileText className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium text-gray-900">{template.name}</h3>
-                      <p className="text-sm text-gray-600">
-                        Exported {template.lastUsed ? new Date(template.lastUsed).toLocaleDateString() : 'Recently'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Badge variant="outline">{template.format.toUpperCase()}</Badge>
-                    <Button variant="outline" size="sm">
-                      <Download className="h-4 w-4 mr-1" />
-                      Download
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        </select>
       </div>
+
+      {!chosen ? (
+        <div className="text-sm text-gray-600">Choose an analysis to export.</div>
+      ) : (
+        <div className="space-y-3">
+          <div className="border rounded p-3 bg-white flex items-center gap-2 flex-wrap">
+            <button
+              className="border rounded px-3 py-1"
+              onClick={() => onExport('excel')}
+              disabled={exporting !== null}
+            >
+              {exporting === 'excel' ? 'Exporting…' : 'Export Excel'}
+            </button>
+            <button
+              className="border rounded px-3 py-1"
+              onClick={() => onExport('csv')}
+              disabled={exporting !== null}
+            >
+              {exporting === 'csv' ? 'Exporting…' : 'Export CSV'}
+            </button>
+            <button
+              className="border rounded px-3 py-1"
+              onClick={() => onExport('pdf')}
+              disabled={exporting !== null}
+            >
+              {exporting === 'pdf' ? 'Exporting…' : 'Export PDF'}
+            </button>
+
+            {error ? <span className="text-xs text-red-500 ml-2">{error}</span> : null}
+          </div>
+
+          <div className="text-xs text-gray-600">
+            {chosen.timestamp?.slice(0, 16)} • {chosen.filename || chosen.id}{chosen.merchant ? ` • ${chosen.merchant}` : ''}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

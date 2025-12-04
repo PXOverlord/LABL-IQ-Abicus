@@ -1,46 +1,62 @@
 
 import { create } from 'zustand';
-import { authAPI, User } from '../api';
+import { authAPI, User, UserSettings } from '../api';
 
 interface AuthState {
   user: User | null;
+  settings: UserSettings | null;
+  isSettingsLoading: boolean;
   isLoading: boolean;
   isAuthenticated: boolean;
+  authError: string | null;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<void>;
   logout: () => void;
   fetchUser: () => Promise<void>;
-  updateSettings: (settings: Partial<User>) => Promise<void>;
+  fetchSettings: () => Promise<void>;
+  updateSettings: (settings: Partial<UserSettings>) => Promise<UserSettings>;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
+  settings: null,
+  isSettingsLoading: false,
   isLoading: false,
   isAuthenticated: false,
+  authError: null,
 
   login: async (email: string, password: string) => {
-    set({ isLoading: true });
+    set({ isLoading: true, authError: null });
     try {
-      const response = await authAPI.login(email, password);
+      await authAPI.login(email, password);
+      const user = await authAPI.me();
       set({ 
-        user: response.user, 
+        user,
         isAuthenticated: true, 
-        isLoading: false 
+        isLoading: false, 
+        authError: null,
       });
+      await get().fetchSettings();
     } catch (error) {
-      set({ isLoading: false });
-      throw error;
+      console.error('Login failed:', error);
+      set({ 
+        isLoading: false, 
+        authError: error instanceof Error ? error.message : 'Unable to login. Please try again.',
+      });
     }
   },
 
   register: async (email: string, password: string) => {
-    set({ isLoading: true });
+    set({ isLoading: true, authError: null });
     try {
       await authAPI.register(email, password);
-      set({ isLoading: false });
+      await get().login(email, password);
     } catch (error) {
-      set({ isLoading: false });
-      throw error;
+      console.error('Registration failed:', error);
+      set({ 
+        isLoading: false, 
+        authError: error instanceof Error ? error.message : 'Unable to register. Please try again.',
+      });
     }
   },
 
@@ -48,70 +64,58 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     authAPI.logout();
     set({ 
       user: null, 
-      isAuthenticated: false 
+      settings: null,
+      isAuthenticated: false,
+      authError: null,
     });
   },
 
   fetchUser: async () => {
+    const token = localStorage.getItem('jwt_token');
+    if (!token) {
+      set({ user: null, isAuthenticated: false, authError: null });
+      return;
+    }
+
+    set({ isLoading: true, authError: null });
     try {
-      // For testing, create a mock user with saved settings
-      const savedSettings = localStorage.getItem('user_settings');
-      const settings = savedSettings ? JSON.parse(savedSettings) : {};
-      
-      const mockUser: User = {
-        id: 'demo-user-1',
-        email: 'test@example.com',
-        role: 'ADMIN',
-        originZip: settings.originZip || '',
-        defaultMarkup: settings.defaultMarkup || 0,
-        defaultSurcharge: settings.defaultSurcharge || 0,
-        weightConversion: settings.weightConversion || 'lbs'
-      };
-      
-      set({ 
-        user: mockUser, 
-        isAuthenticated: true 
-      });
-    } catch (error: any) {
-      // If there's an error, still create a basic mock user
-      const mockUser: User = {
-        id: 'demo-user-1',
-        email: 'test@example.com',
-        role: 'ADMIN'
-      };
-      set({ 
-        user: mockUser, 
-        isAuthenticated: true 
-      });
+      const user = await authAPI.me();
+      set({ user, isAuthenticated: true, isLoading: false, authError: null });
+      await get().fetchSettings();
+    } catch (error) {
+      console.error('Failed to fetch current user:', error);
+      authAPI.logout();
+      set({ user: null, settings: null, isAuthenticated: false, isLoading: false, authError: null });
     }
   },
 
-  updateSettings: async (settings: Partial<User>) => {
+  fetchSettings: async () => {
+    const { isAuthenticated } = get();
+    if (!isAuthenticated) return;
+    set({ isSettingsLoading: true });
     try {
-      // For testing, just update the local state
-      const currentUser = get().user;
-      if (currentUser) {
-        const updatedUser = { ...currentUser, ...settings };
-        set({ user: updatedUser });
-        
-        // Also save to localStorage for persistence
-        localStorage.setItem('user_settings', JSON.stringify(settings));
-        
-        return updatedUser;
-      } else {
-        // Create a mock user if none exists
-        const mockUser: User = {
-          id: 'demo-user-1',
-          email: 'test@example.com',
-          role: 'ADMIN',
-          ...settings
-        };
-        set({ user: mockUser });
-        localStorage.setItem('user_settings', JSON.stringify(settings));
-        return mockUser;
-      }
+      const settings = await authAPI.getSettings();
+      set({ settings, isSettingsLoading: false });
+    } catch (error) {
+      console.error('Failed to fetch user settings:', error);
+      set({ isSettingsLoading: false });
+      throw error;
+    }
+  },
+
+  updateSettings: async (settings) => {
+    const { user } = get();
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+    set({ isSettingsLoading: true });
+    try {
+      const updated = await authAPI.updateSettings(settings);
+      set({ settings: updated, isSettingsLoading: false });
+      return updated;
     } catch (error) {
       console.error('Error updating settings:', error);
+      set({ isSettingsLoading: false });
       throw error;
     }
   },

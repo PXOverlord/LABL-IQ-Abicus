@@ -1,345 +1,351 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useAnalysisStore } from '@/hooks/useAnalysisStore';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { 
-  Settings, 
-  Save, 
-  RotateCcw, 
-  Fuel, 
-  TrendingUp, 
-  Package, 
-  MapPin,
-  CheckCircle,
-  AlertCircle
-} from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import toast from 'react-hot-toast';
+
+import { useAuthStore } from '../../lib/stores/auth-store';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
+import { Button } from '../../components/ui/button';
+import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Loader2, Save } from 'lucide-react';
+
+type FormState = {
+  originZip: string;
+  defaultMarkup: number;
+  fuelSurcharge: number;
+  dasSurcharge: number;
+  edasSurcharge: number;
+  remoteSurcharge: number;
+  dimDivisor: number;
+  standardMarkup: number;
+  expeditedMarkup: number;
+  priorityMarkup: number;
+  nextDayMarkup: number;
+};
+
+const DEFAULT_FORM: FormState = {
+  originZip: '',
+  defaultMarkup: 10,
+  fuelSurcharge: 16,
+  dasSurcharge: 1.98,
+  edasSurcharge: 3.92,
+  remoteSurcharge: 14.15,
+  dimDivisor: 139,
+  standardMarkup: 0,
+  expeditedMarkup: 10,
+  priorityMarkup: 15,
+  nextDayMarkup: 25,
+};
+
+const numberFields: Array<keyof FormState> = [
+  'defaultMarkup',
+  'fuelSurcharge',
+  'dasSurcharge',
+  'edasSurcharge',
+  'remoteSurcharge',
+  'dimDivisor',
+  'standardMarkup',
+  'expeditedMarkup',
+  'priorityMarkup',
+  'nextDayMarkup',
+];
 
 export default function SettingsPage() {
-  const { settings, setSettings } = useAnalysisStore();
-  const [localSettings, setLocalSettings] = useState(settings);
-  const [isDirty, setIsDirty] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const settings = useAuthStore((state) => state.settings);
+  const isSettingsLoading = useAuthStore((state) => state.isSettingsLoading);
+  const fetchSettings = useAuthStore((state) => state.fetchSettings);
+  const updateSettings = useAuthStore((state) => state.updateSettings);
 
-  // Update local settings when global settings change
+  const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const hasFetched = useRef(false);
+  const lastAppliedSnapshot = useRef<string | null>(null);
+
   useEffect(() => {
-    setLocalSettings(settings);
-    setIsDirty(false);
+    if (hasFetched.current) return;
+    hasFetched.current = true;
+    fetchSettings().catch((err) => {
+      console.error('Failed to load user settings', err);
+      setError('Unable to load settings. Please refresh the page.');
+    });
+  }, [fetchSettings]);
+
+  useEffect(() => {
+    if (!settings) return;
+    const snapshot = JSON.stringify(settings);
+    if (lastAppliedSnapshot.current === snapshot) return;
+    lastAppliedSnapshot.current = snapshot;
+
+    const mapped: FormState = {
+      originZip: settings.originZip || '',
+      defaultMarkup: settings.defaultMarkup ?? DEFAULT_FORM.defaultMarkup,
+      fuelSurcharge: settings.fuelSurcharge ?? DEFAULT_FORM.fuelSurcharge,
+      dasSurcharge: settings.dasSurcharge ?? DEFAULT_FORM.dasSurcharge,
+      edasSurcharge: settings.edasSurcharge ?? DEFAULT_FORM.edasSurcharge,
+      remoteSurcharge: settings.remoteSurcharge ?? DEFAULT_FORM.remoteSurcharge,
+      dimDivisor: settings.dimDivisor ?? DEFAULT_FORM.dimDivisor,
+      standardMarkup: settings.standardMarkup ?? DEFAULT_FORM.standardMarkup,
+      expeditedMarkup: settings.expeditedMarkup ?? DEFAULT_FORM.expeditedMarkup,
+      priorityMarkup: settings.priorityMarkup ?? DEFAULT_FORM.priorityMarkup,
+      nextDayMarkup: settings.nextDayMarkup ?? DEFAULT_FORM.nextDayMarkup,
+    };
+
+    setForm(mapped);
   }, [settings]);
 
-  // Check if settings have changed
-  useEffect(() => {
-    const hasChanges = JSON.stringify(localSettings) !== JSON.stringify(settings);
-    setIsDirty(hasChanges);
-  }, [localSettings, settings]);
+  const handleInputChange = (field: keyof FormState, value: string) => {
+    if (field === 'originZip') {
+      setForm((prev) => ({ ...prev, originZip: value }));
+      return;
+    }
 
-  const handleSettingChange = (key: keyof typeof settings, value: any) => {
-    setLocalSettings(prev => ({
+    const numeric = Number(value);
+    setForm((prev) => ({
       ...prev,
-      [key]: value
+      [field]: Number.isFinite(numeric) ? numeric : prev[field],
     }));
   };
 
-  const handleSave = () => {
-    setSaveStatus('saving');
-    
-    // Update global settings
-    setSettings(localSettings);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 2000);
-    }, 500);
-  };
+  const hasChanges = useMemo(() => {
+    if (!settings) return true;
+    return (
+      form.originZip !== (settings.originZip || '') ||
+      numberFields.some((field) => form[field] !== (settings[field] ?? DEFAULT_FORM[field]))
+    );
+  }, [form, settings]);
 
   const handleReset = () => {
-    setLocalSettings(settings);
-    setIsDirty(false);
+    if (!settings) {
+      setForm(DEFAULT_FORM);
+      return;
+    }
+    lastAppliedSnapshot.current = null;
+    setForm({
+      originZip: settings.originZip || '',
+      defaultMarkup: settings.defaultMarkup ?? DEFAULT_FORM.defaultMarkup,
+      fuelSurcharge: settings.fuelSurcharge ?? DEFAULT_FORM.fuelSurcharge,
+      dasSurcharge: settings.dasSurcharge ?? DEFAULT_FORM.dasSurcharge,
+      edasSurcharge: settings.edasSurcharge ?? DEFAULT_FORM.edasSurcharge,
+      remoteSurcharge: settings.remoteSurcharge ?? DEFAULT_FORM.remoteSurcharge,
+      dimDivisor: settings.dimDivisor ?? DEFAULT_FORM.dimDivisor,
+      standardMarkup: settings.standardMarkup ?? DEFAULT_FORM.standardMarkup,
+      expeditedMarkup: settings.expeditedMarkup ?? DEFAULT_FORM.expeditedMarkup,
+      priorityMarkup: settings.priorityMarkup ?? DEFAULT_FORM.priorityMarkup,
+      nextDayMarkup: settings.nextDayMarkup ?? DEFAULT_FORM.nextDayMarkup,
+    });
   };
 
-  const handleResetToDefaults = () => {
-    const defaults = {
-      weightUnit: 'oz' as const,
-      fuelSurchargePct: 0,
-      markupPct: 0,
-      dimDivisor: 139,
-      dasSurcharge: 1.98,
-      edasSurcharge: 3.92,
-      remoteSurcharge: 14.15,
-      discountPercent: 0,
-      markupPercentage: 10
-    };
-    setLocalSettings(defaults);
-    setIsDirty(true);
+  const onSave = async () => {
+    setIsSaving(true);
+    setError(null);
+    try {
+      await updateSettings({
+        originZip: form.originZip || null,
+        defaultMarkup: form.defaultMarkup,
+        fuelSurcharge: form.fuelSurcharge,
+        dasSurcharge: form.dasSurcharge,
+        edasSurcharge: form.edasSurcharge,
+        remoteSurcharge: form.remoteSurcharge,
+        dimDivisor: form.dimDivisor,
+        standardMarkup: form.standardMarkup,
+        expeditedMarkup: form.expeditedMarkup,
+        priorityMarkup: form.priorityMarkup,
+        nextDayMarkup: form.nextDayMarkup,
+      });
+      toast.success('Settings saved');
+    } catch (err) {
+      console.error('Failed to save settings', err);
+      setError('Unable to save changes. Please try again.');
+      toast.error('Failed to save settings');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-          <p className="text-gray-600 mt-1">Configure your analysis parameters and preferences</p>
-        </div>
-        <div className="flex space-x-3">
-          <Button 
-            variant="outline" 
-            onClick={handleReset}
-            disabled={!isDirty}
-          >
-            <RotateCcw className="w-4 h-4 mr-2" />
-            Reset Changes
-          </Button>
-          <Button 
-            onClick={handleSave}
-            disabled={!isDirty || saveStatus === 'saving'}
-            className="bg-black text-white hover:bg-gray-800"
-          >
-            <Save className="w-4 h-4 mr-2" />
-            {saveStatus === 'saving' ? 'Saving...' : 'Save Changes'}
-          </Button>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Account Settings</h1>
+        <p className="text-sm text-gray-600">
+          Update your default calculation preferences. These values are used to pre-fill new analyses.
+        </p>
       </div>
 
-      {/* Save Status */}
-      {saveStatus === 'saved' && (
-        <div className="flex items-center space-x-2 p-3 bg-green-50 border border-green-200 rounded-lg">
-          <CheckCircle className="w-5 h-5 text-green-600" />
-          <span className="text-green-800">Settings saved successfully!</span>
-        </div>
-      )}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      {saveStatus === 'error' && (
-        <div className="flex items-center space-x-2 p-3 bg-red-50 border border-red-200 rounded-lg">
-          <AlertCircle className="w-5 h-5 text-red-600" />
-          <span className="text-red-800">Error saving settings. Please try again.</span>
-        </div>
-      )}
-
-      {/* Settings Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Basic Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Package className="w-5 h-5" />
-              <span>Basic Settings</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="weightUnit">Default Weight Unit</Label>
-              <Select 
-                value={localSettings.weightUnit} 
-                onValueChange={(value) => handleSettingChange('weightUnit', value)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="oz">Ounces (oz)</SelectItem>
-                  <SelectItem value="lb">Pounds (lb)</SelectItem>
-                  <SelectItem value="lbs">Pounds (lbs)</SelectItem>
-                  <SelectItem value="g">Grams (g)</SelectItem>
-                  <SelectItem value="kg">Kilograms (kg)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label htmlFor="dimDivisor">Dimensional Divisor</Label>
+      <Card>
+        <CardHeader>
+          <CardTitle>Default Rate Settings</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <Label htmlFor="originZip">Origin ZIP</Label>
               <Input
-                id="dimDivisor"
-                type="number"
-                value={localSettings.dimDivisor || 139}
-                onChange={(e) => handleSettingChange('dimDivisor', parseFloat(e.target.value) || 139)}
-                placeholder="139"
+                id="originZip"
+                value={form.originZip}
+                onChange={(event) => handleInputChange('originZip', event.target.value)}
+                maxLength={10}
+                placeholder="46307"
+                disabled={isSettingsLoading}
               />
-              <p className="text-sm text-gray-500 mt-1">Used for dimensional weight calculations</p>
+              <p className="text-xs text-gray-500">Default origin ZIP used when calculating surcharges.</p>
             </div>
-          </CardContent>
-        </Card>
 
-        {/* Surcharge Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Fuel className="w-5 h-5" />
-              <span>Surcharges</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
+            <div className="space-y-2">
+              <Label htmlFor="defaultMarkup">Default Markup (%)</Label>
+              <Input
+                id="defaultMarkup"
+                type="number"
+                min={0}
+                step={0.1}
+                value={form.defaultMarkup}
+                onChange={(event) => handleInputChange('defaultMarkup', event.target.value)}
+                disabled={isSettingsLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="fuelSurcharge">Fuel Surcharge (%)</Label>
               <Input
                 id="fuelSurcharge"
                 type="number"
-                step="0.01"
-                value={localSettings.fuelSurchargePct || 0}
-                onChange={(e) => handleSettingChange('fuelSurchargePct', parseFloat(e.target.value) || 0)}
-                placeholder="0.00"
+                min={0}
+                step={0.1}
+                value={form.fuelSurcharge}
+                onChange={(event) => handleInputChange('fuelSurcharge', event.target.value)}
+                disabled={isSettingsLoading}
               />
             </div>
 
-            <div>
+            <div className="space-y-2">
+              <Label htmlFor="dimDivisor">Dimensional Divisor</Label>
+              <Input
+                id="dimDivisor"
+                type="number"
+                min={1}
+                value={form.dimDivisor}
+                onChange={(event) => handleInputChange('dimDivisor', event.target.value)}
+                disabled={isSettingsLoading}
+              />
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="dasSurcharge">DAS Surcharge ($)</Label>
               <Input
                 id="dasSurcharge"
                 type="number"
-                step="0.01"
-                value={localSettings.dasSurcharge || 1.98}
-                onChange={(e) => handleSettingChange('dasSurcharge', parseFloat(e.target.value) || 1.98)}
-                placeholder="1.98"
+                min={0}
+                step={0.01}
+                value={form.dasSurcharge}
+                onChange={(event) => handleInputChange('dasSurcharge', event.target.value)}
+                disabled={isSettingsLoading}
               />
             </div>
 
-            <div>
-              <Label htmlFor="edasSurcharge">EDAS Surcharge ($)</Label>
+            <div className="space-y-2">
+              <Label htmlFor="edasSurcharge">eDAS Surcharge ($)</Label>
               <Input
                 id="edasSurcharge"
                 type="number"
-                step="0.01"
-                value={localSettings.edasSurcharge || 3.92}
-                onChange={(e) => handleSettingChange('edasSurcharge', parseFloat(e.target.value) || 3.92)}
-                placeholder="3.92"
+                min={0}
+                step={0.01}
+                value={form.edasSurcharge}
+                onChange={(event) => handleInputChange('edasSurcharge', event.target.value)}
+                disabled={isSettingsLoading}
               />
             </div>
 
-            <div>
+            <div className="space-y-2">
               <Label htmlFor="remoteSurcharge">Remote Surcharge ($)</Label>
               <Input
                 id="remoteSurcharge"
                 type="number"
-                step="0.01"
-                value={localSettings.remoteSurcharge || 14.15}
-                onChange={(e) => handleSettingChange('remoteSurcharge', parseFloat(e.target.value) || 14.15)}
-                placeholder="14.15"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Markup & Discount Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <TrendingUp className="w-5 h-5" />
-              <span>Markup & Discounts</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="markupPct">Default Markup (%)</Label>
-              <Input
-                id="markupPct"
-                type="number"
-                step="0.01"
-                value={localSettings.markupPct || 0}
-                onChange={(e) => handleSettingChange('markupPct', parseFloat(e.target.value) || 0)}
-                placeholder="0.00"
+                min={0}
+                step={0.01}
+                value={form.remoteSurcharge}
+                onChange={(event) => handleInputChange('remoteSurcharge', event.target.value)}
+                disabled={isSettingsLoading}
               />
             </div>
 
-            <div>
-              <Label htmlFor="discountPercent">Discount (%)</Label>
-              <Input
-                id="discountPercent"
-                type="number"
-                step="0.01"
-                value={localSettings.discountPercent || 0}
-                onChange={(e) => handleSettingChange('discountPercent', parseFloat(e.target.value) || 0)}
-                placeholder="0.00"
-              />
+            <div className="space-y-2">
+              <Label>Service Level Markups (%)</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={form.standardMarkup}
+                  onChange={(event) => handleInputChange('standardMarkup', event.target.value)}
+                  placeholder="Standard"
+                  disabled={isSettingsLoading}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={form.expeditedMarkup}
+                  onChange={(event) => handleInputChange('expeditedMarkup', event.target.value)}
+                  placeholder="Expedited"
+                  disabled={isSettingsLoading}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={form.priorityMarkup}
+                  onChange={(event) => handleInputChange('priorityMarkup', event.target.value)}
+                  placeholder="Priority"
+                  disabled={isSettingsLoading}
+                />
+                <Input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={form.nextDayMarkup}
+                  onChange={(event) => handleInputChange('nextDayMarkup', event.target.value)}
+                  placeholder="Next Day"
+                  disabled={isSettingsLoading}
+                />
+              </div>
             </div>
+          </div>
 
-            <div>
-              <Label htmlFor="markupPercentage">Markup Percentage (%)</Label>
-              <Input
-                id="markupPercentage"
-                type="number"
-                step="0.01"
-                value={localSettings.markupPercentage || 10}
-                onChange={(e) => handleSettingChange('markupPercentage', parseFloat(e.target.value) || 10)}
-                placeholder="10.00"
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Zone & Location Settings */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <MapPin className="w-5 h-5" />
-              <span>Zone & Location</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="originZip">Default Origin ZIP</Label>
-              <Input
-                id="originZip"
-                type="text"
-                value={localSettings.originZip || '46307'}
-                onChange={(e) => handleSettingChange('originZip', e.target.value)}
-                placeholder="46307"
-              />
-              <p className="text-sm text-gray-500 mt-1">Used when origin ZIP is not provided</p>
-            </div>
-
-            <div>
-              <Label htmlFor="destinationZip">Default Destination ZIP</Label>
-              <Input
-                id="destinationZip"
-                type="text"
-                value={localSettings.destinationZip || '60601'}
-                onChange={(e) => handleSettingChange('destinationZip', e.target.value)}
-                placeholder="60601"
-              />
-              <p className="text-sm text-gray-500 mt-1">Used when destination ZIP is not provided</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Actions</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex space-x-3">
-            <Button 
-              variant="outline" 
-              onClick={handleResetToDefaults}
-            >
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Reset to Defaults
+          <div className="flex items-center justify-between gap-3">
+            <Button variant="outline" type="button" onClick={handleReset} disabled={isSettingsLoading || isSaving}>
+              Reset
             </Button>
-            <Button 
-              variant="outline"
-              onClick={() => {
-                // Export settings
-                const dataStr = JSON.stringify(localSettings, null, 2);
-                const dataBlob = new Blob([dataStr], { type: 'application/json' });
-                const url = URL.createObjectURL(dataBlob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = 'labl-iq-settings.json';
-                link.click();
-                URL.revokeObjectURL(url);
-              }}
+            <Button
+              type="button"
+              onClick={onSave}
+              disabled={!hasChanges || isSaving || isSettingsLoading}
             >
-              Export Settings
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                <>
+                  <Save className="mr-2 h-4 w-4" />
+                  Save Changes
+                </>
+              )}
             </Button>
           </div>
+
+          <p className="text-xs text-gray-500">
+            Saved values are used to pre-fill new analyses in the upload wizard. You can still adjust them per analysis if needed.
+          </p>
         </CardContent>
       </Card>
     </div>

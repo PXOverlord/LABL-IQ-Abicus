@@ -146,7 +146,6 @@ export function EnhancedMainNavigation() {
     const item = navigationItems.find(nav => nav.id === tab);
     if (item) {
       addCurrentPageBookmark({
-        id: item.id,
         title: item.label,
         url: item.href,
         description: item.description
