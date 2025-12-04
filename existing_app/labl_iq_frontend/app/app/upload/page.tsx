@@ -440,7 +440,7 @@ export default function UploadPage() {
     setColumnMapping({});
     // Re-run auto-mapping
     if (availableColumns.length > 0) {
-      const suggestedMappings: ColumnMapping = {};
+      const suggestedMappings: Record<string, string> = {};
       
       // Map required fields
       REQUIRED_FIELDS.forEach(field => {
@@ -472,7 +472,7 @@ export default function UploadPage() {
         suggestedMappings.to_zip = 'Ship Postal Code';
       }
       
-      setColumnMapping(suggestedMappings);
+      setColumnMapping(suggestedMappings as ColumnMapping);
     }
   };
 
