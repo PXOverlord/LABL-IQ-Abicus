@@ -480,15 +480,15 @@ export default function UploadPage() {
     if (columnName === 'none') {
       // Remove the mapping for this field
       setColumnMapping(prev => {
-        const newMapping = { ...prev };
+        const newMapping: Record<string, string> = { ...prev } as Record<string, string>;
         delete newMapping[fieldKey];
         return newMapping;
       });
     } else {
       // Set the mapping for this field
       setColumnMapping(prev => ({
-        ...prev,
-        [fieldKey]: columnName
+        ...(prev as Record<string, string>),
+        [fieldKey]: columnName,
       }));
     }
   };
