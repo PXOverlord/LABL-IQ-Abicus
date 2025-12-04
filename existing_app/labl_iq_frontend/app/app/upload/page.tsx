@@ -543,7 +543,9 @@ export default function UploadPage() {
       return;
     }
 
-    const mappingRecord: Record<string, string | undefined> = columnMapping || {};
+    const mappingRecord: Record<string, string | undefined> = {
+      ...(columnMapping as Record<string, string | undefined>),
+    };
 
     // Ensure required mappings are provided
     for (const field of REQUIRED_FIELDS) {
