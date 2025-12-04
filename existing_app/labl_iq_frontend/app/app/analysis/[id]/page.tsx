@@ -52,12 +52,12 @@ export default function AnalysisDetail({ params }: { params: { id: string } }) {
 
   const settingsEntries = [
     { label: 'Markup percent', value: settings.markup_percent ?? settings.markupPct ?? settings.markupPercentage },
-    { label: 'Fuel surcharge %', value: settings.fuel_surcharge_percent ?? settings.fuelSurchargePct },
+    { label: 'Fuel surcharge %', value: settings.fuel_surcharge_percent ?? settings.fuelSurchargePct, format: 'percent' as const },
     { label: 'Service level', value: settings.serviceLevel || current?.status || 'standard' },
     { label: 'Origin ZIP', value: settings.origin_zip ?? settings.originZip },
-    { label: 'DAS surcharge', value: settings.das_surcharge, format: 'currency' },
-    { label: 'eDAS surcharge', value: settings.edas_surcharge, format: 'currency' },
-    { label: 'Remote surcharge', value: settings.remote_surcharge, format: 'currency' },
+    { label: 'DAS surcharge', value: settings.das_surcharge, format: 'currency' as const },
+    { label: 'eDAS surcharge', value: settings.edas_surcharge, format: 'currency' as const },
+    { label: 'Remote surcharge', value: settings.remote_surcharge, format: 'currency' as const },
     { label: 'Dim divisor', value: settings.dim_divisor ?? settings.dimDivisor },
   ];
 
