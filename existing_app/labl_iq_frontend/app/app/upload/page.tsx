@@ -544,8 +544,8 @@ export default function UploadPage() {
     }
 
     // Ensure required mappings are provided
-    const mappingRecord = columnMapping as Record<string, string | undefined>;
     for (const field of REQUIRED_FIELDS) {
+      const mappingRecord = columnMapping as Record<string, string | undefined>;
       if (!mappingRecord[field.key]) {
         setError(`Please map a column for ${field.label}.`);
         return;
