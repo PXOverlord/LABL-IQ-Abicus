@@ -218,6 +218,7 @@ export interface ColumnMapping {
   rate?: string;
   zone?: string;
   service_level?: string;
+  serviceLevel?: string;
   package_type?: string;
   shipment_id?: string;
 }
