@@ -1,6 +1,9 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+// Force dynamic rendering so search params can be used without static prerender errors
+export const dynamic = 'force-dynamic';
+
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { saveAs } from 'file-saver';
 
@@ -8,6 +11,14 @@ import { useAnalysisStore } from '../../hooks/useAnalysisStore';
 import { analysisAPI } from '../../lib/api';
 
 export default function ExportPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading export tools…</div>}>
+      <ExportContent />
+    </Suspense>
+  );
+}
+
+function ExportContent() {
   const params = useSearchParams();
   const initialId = params.get('analysis') || '';
   const analyses = useAnalysisStore((state) => state.analyses);

@@ -1,6 +1,9 @@
 'use client';
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+// Force dynamic rendering so search params can be used without static prerender errors
+export const dynamic = 'force-dynamic';
+
+import { useState, useCallback, useEffect, useRef, Suspense } from 'react';
 import { useAnalysisStore } from '../../hooks/useAnalysisStore';
 import { analysisAPI, ColumnMapping } from '../../lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -56,6 +59,14 @@ const normalizeMappingForColumns = (candidate: Record<string, string> | undefine
 };
 
 export default function UploadPage() {
+  return (
+    <Suspense fallback={<div className="p-6">Loading upload flow…</div>}>
+      <UploadContent />
+    </Suspense>
+  );
+}
+
+function UploadContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryStep = searchParams.get('step');
