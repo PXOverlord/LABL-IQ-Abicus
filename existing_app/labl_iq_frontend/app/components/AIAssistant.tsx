@@ -644,7 +644,7 @@ export function AIAssistant({ isOpen = false, onClose }: AIAssistantProps) {
                                 <Button
                                   key={suggestion}
                                   variant="outline"
-                                  size="xs"
+                                  size="sm"
                                   onClick={() => handleSuggestion(suggestion)}
                                   className="text-xs"
                                 >
