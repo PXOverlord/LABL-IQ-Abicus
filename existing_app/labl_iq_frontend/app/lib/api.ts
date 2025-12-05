@@ -195,6 +195,7 @@ export interface Analysis {
   notes?: string | null;
   results?: any[];
   settings?: Record<string, any> | null;
+  visualizations?: Record<string, any> | null;
 }
 
 export interface ColumnProfile {

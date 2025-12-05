@@ -184,7 +184,7 @@ function mapFastApiAnalysisResult(item: FastApiAnalysis & { merchant?: string | 
     previewCount:
       (item as any).previewCount ??
       (Array.isArray(item.results) ? item.results.length : 0),
-    visualizations: item.visualizations ?? null,
+    visualizations: (item as any).visualizations ?? null,
   };
 }
 
