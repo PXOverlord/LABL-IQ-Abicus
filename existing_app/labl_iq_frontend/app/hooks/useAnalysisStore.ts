@@ -177,8 +177,13 @@ function mapFastApiAnalysisResult(item: FastApiAnalysis & { merchant?: string | 
     results: item.results ?? [],
     summary,
     settings,
-    totalResults: item.totalResults ?? item.totalPackages ?? item.results?.length ?? 0,
-    previewCount: item.previewCount ?? item.results?.length ?? 0,
+    totalResults:
+      (item as any).totalResults ??
+      item.totalPackages ??
+      (Array.isArray(item.results) ? item.results.length : 0),
+    previewCount:
+      (item as any).previewCount ??
+      (Array.isArray(item.results) ? item.results.length : 0),
     visualizations: item.visualizations ?? null,
   };
 }
