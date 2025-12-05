@@ -1087,12 +1087,14 @@ export default function UploadPage() {
                 <span className="text-gray-600">Columns:</span>
                 <span className="ml-2 font-medium">{availableColumns.length}</span>
               </div>
-             <div>
-               <span className="text-gray-600">Mapped Fields:</span>
-               <span className="ml-2 font-medium">
-                 {Object.keys(columnMapping).filter(key => columnMapping[key]).length}
-               </span>
-             </div>
+              <div>
+                <span className="text-gray-600">Mapped Fields:</span>
+                <span className="ml-2 font-medium">
+                  {Object.keys(columnMapping as Record<string, string | undefined>).filter(
+                    (key) => (columnMapping as Record<string, string | undefined>)[key]
+                  ).length}
+                </span>
+              </div>
               <div>
                 <span className="text-gray-600">Analysis ID:</span>
                 <span className="ml-2 font-medium">{analysisId || 'Pending'}</span>
