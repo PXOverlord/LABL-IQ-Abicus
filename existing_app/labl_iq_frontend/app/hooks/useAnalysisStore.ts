@@ -111,7 +111,13 @@ export const useAnalysisStore = create<State>((set, get) => ({
   },
 
   updateAnalysisMeta: async (id, payload) => {
-    const updated = await analysisAPI.updateMetadata(id, payload);
+    const normalizedPayload = {
+      merchant: payload.merchant ?? undefined,
+      title: payload.title ?? undefined,
+      tags: payload.tags ?? undefined,
+      notes: payload.notes ?? undefined,
+    };
+    const updated = await analysisAPI.updateMetadata(id, normalizedPayload);
     const mapped = mapFastApiAnalysisResult(updated);
     set({ current: mapped });
     get().loadHistory().catch(() => {});
