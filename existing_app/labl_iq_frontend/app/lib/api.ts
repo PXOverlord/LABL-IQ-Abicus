@@ -213,6 +213,7 @@ export interface ColumnMapping {
   height?: string;
   from_zip?: string;
   to_zip?: string;
+  destinationZip?: string;
   carrier?: string;
   rate?: string;
   zone?: string;
