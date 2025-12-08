@@ -33,10 +33,17 @@ export default function ReportsPage() {
   const [report, setReport] = useState<AnalysisComparisonResponse | null>(null);
   const [isComparing, setIsComparing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     loadHistory({ limit: 50 }).catch((error) => {
       console.error('Failed to load analysis history for reports', error);
+      const msg =
+        (error as any)?.response?.status === 401
+          ? 'Please log in to view your analyses.'
+          : 'Unable to load analysis history.';
+      setLoadError(msg);
+      setErrorMessage(msg);
     });
   }, [loadHistory]);
 
@@ -131,6 +138,10 @@ export default function ReportsPage() {
             <div className="flex items-center justify-center py-10 text-muted-foreground">
               <Loader2 className="mr-3 h-5 w-5 animate-spin" />
               Loading analysis history…
+            </div>
+          ) : loadError ? (
+            <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-md p-3">
+              {loadError}
             </div>
           ) : !analyses.length ? (
             <div className="text-center py-10 text-muted-foreground">
