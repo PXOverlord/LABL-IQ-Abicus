@@ -187,6 +187,11 @@ export default function ReportsPage() {
       {errorMessage ? (
         <Alert className="border-red-200 bg-red-50">
           <AlertDescription className="text-red-800">{errorMessage}</AlertDescription>
+          <div className="mt-3">
+            <Button size="sm" variant="outline" onClick={() => void handleCompare()}>
+              Retry
+            </Button>
+          </div>
         </Alert>
       ) : null}
 

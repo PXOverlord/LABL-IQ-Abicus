@@ -62,6 +62,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const hasFetched = useRef(false);
   const lastAppliedSnapshot = useRef<string | null>(null);
 
@@ -141,6 +142,7 @@ export default function SettingsPage() {
 
   const onSave = async () => {
     setIsSaving(true);
+    setSaveMessage(null);
     setError(null);
     try {
       await updateSettings({
@@ -156,11 +158,13 @@ export default function SettingsPage() {
         priorityMarkup: form.priorityMarkup,
         nextDayMarkup: form.nextDayMarkup,
       });
+      setSaveMessage('Settings saved');
       toast.success('Settings saved');
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save settings', err);
-      setError('Unable to save changes. Please try again.');
-      toast.error('Failed to save settings');
+      const msg = err?.response?.data?.detail || 'Unable to save changes. Please try again.';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsSaving(false);
     }
@@ -178,6 +182,10 @@ export default function SettingsPage() {
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : saveMessage ? (
+        <Alert>
+          <AlertDescription>{saveMessage}</AlertDescription>
         </Alert>
       ) : null}
 

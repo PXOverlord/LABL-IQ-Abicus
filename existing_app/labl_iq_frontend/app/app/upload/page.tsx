@@ -534,6 +534,7 @@ function UploadContent() {
     if (profile) {
       setColumnMapping(profile.mapping);
       setSelectedProfile(profileId);
+      toast.success(`Loaded profile "${profile.name}"`);
     } else {
       toast.error('Profile not found');
     }
