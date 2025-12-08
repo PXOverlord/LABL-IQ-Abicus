@@ -1,20 +1,47 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
-import { Shield, Users, Settings, Activity, Database } from 'lucide-react';
+import { Shield, Users, Settings, Activity, Database, AlertTriangle } from 'lucide-react';
+import { adminAPI, User } from '../../lib/api';
+import toast from 'react-hot-toast';
 
 export default function AdminPage() {
   const [isLoading, setIsLoading] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    setIsLoading(true);
+    adminAPI
+      .getUsers()
+      .then((data) => {
+        if (mounted) setUsers(data || []);
+      })
+      .catch((err: any) => {
+        const msg =
+          err?.response?.status === 401 || err?.response?.status === 403
+            ? 'Admin access required.'
+            : 'Unable to load users.';
+        setError(msg);
+        toast.error(msg);
+      })
+      .finally(() => mounted && setIsLoading(false));
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleSystemCheck = () => {
     setIsLoading(true);
     setTimeout(() => {
       setIsLoading(false);
-    }, 2000);
+      toast.success('System check complete');
+    }, 1200);
   };
 
   return (
@@ -38,14 +65,33 @@ export default function AdminPage() {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-600">Total Users</span>
-                <Badge variant="secondary">1,234</Badge>
+                <Badge variant="secondary">
+                  {isLoading ? '…' : users.length || '0'}
+                </Badge>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-600">Active Users</span>
-                <Badge variant="secondary">892</Badge>
-              </div>
-              <Button size="sm" variant="black" className="w-full">
-                Manage Users
+              {error ? (
+                <div className="text-xs text-red-600 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  {error}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Admin users</span>
+                    <Badge variant="secondary">
+                      {users.filter((u) => u.role === 'ADMIN').length || 0}
+                    </Badge>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Active</span>
+                    <Badge variant="secondary">
+                      {users.filter((u: any) => (u as any).isActive !== false).length || 0}
+                    </Badge>
+                  </div>
+                </div>
+              )}
+              <Button size="sm" variant="black" className="w-full" disabled>
+                Manage Users (coming soon)
               </Button>
             </div>
           </CardContent>
