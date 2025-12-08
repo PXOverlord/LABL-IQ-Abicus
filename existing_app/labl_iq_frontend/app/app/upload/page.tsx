@@ -103,6 +103,7 @@ function UploadContent() {
     deleteProfile: removeProfile,
   } = useProfilesStore();
   const hasLoadedProfiles = useRef(false);
+  const [profilesError, setProfilesError] = useState<string | null>(null);
   // Local state for UI (these will sync with global settings)
 
   const hydrateExistingAnalysis = useCallback(async (id: string) => {
@@ -186,8 +187,11 @@ function UploadContent() {
       .then(() => {
         hasLoadedProfiles.current = true;
       })
-      .catch(() => {
+      .catch((err) => {
         hasLoadedProfiles.current = true;
+        console.error('Failed to load profiles', err);
+        setProfilesError('Could not load saved profiles. Please log in and try again.');
+        toast.error('Could not load saved profiles.');
       });
   }, [loadProfiles]);
 
@@ -530,6 +534,8 @@ function UploadContent() {
     if (profile) {
       setColumnMapping(profile.mapping);
       setSelectedProfile(profileId);
+    } else {
+      toast.error('Profile not found');
     }
   };
 
@@ -807,6 +813,10 @@ function UploadContent() {
           {profilesLoading ? (
             <div className="bg-gray-50 p-4 rounded-lg text-sm text-gray-500">
               Loading saved profiles…
+            </div>
+          ) : profilesError ? (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-4 text-sm">
+              {profilesError}
             </div>
           ) : profiles.length > 0 ? (
             <div className="bg-gray-50 p-4 rounded-lg">
