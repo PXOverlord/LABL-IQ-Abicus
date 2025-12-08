@@ -72,16 +72,6 @@ export function Header({ onMenuToggle, onAssistantOpen }: HeaderProps) {
             <span>{currentDate}</span>
           </div>
 
-          {/* Demo Mode */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
-          >
-            <Zap className="h-3 w-3 mr-1" />
-            Demo Mode
-          </Button>
-
           {/* Notifications */}
           <Button
             variant="ghost"
