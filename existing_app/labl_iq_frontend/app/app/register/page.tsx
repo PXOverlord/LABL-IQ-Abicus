@@ -10,6 +10,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '@radix-ui/react-label';
 import { TrendingUp, Mail, Lock, AlertCircle, CheckCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { authAPI } from '../../lib/api';
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('');
