@@ -30,33 +30,21 @@ export default function RegisterPage() {
       return;
     }
 
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+    // Backend enforces min length 8
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters');
       setIsLoading(false);
       return;
     }
 
     try {
-      const response = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.error || 'Registration failed');
-        toast.error(data.error || 'Registration failed');
-      } else {
-        toast.success('Account created successfully! Please sign in.');
-        router.push('/login');
-      }
-    } catch (error) {
-      setError('An error occurred. Please try again.');
-      toast.error('An error occurred. Please try again.');
+      await authAPI.register(email, password);
+      toast.success('Account created successfully! Please sign in.');
+      router.push('/login');
+    } catch (error: any) {
+      const message = error?.response?.data?.detail || error?.message || 'Registration failed';
+      setError(message);
+      toast.error(message);
     } finally {
       setIsLoading(false);
     }
@@ -113,7 +101,7 @@ export default function RegisterPage() {
                   />
                 </div>
                 <p className="text-xs text-gray-500">
-                  Must be at least 6 characters
+                  Must be at least 8 characters
                 </p>
               </div>
 
