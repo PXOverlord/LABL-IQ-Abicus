@@ -14,11 +14,13 @@ import toast from 'react-hot-toast';
 export default function ProfilesPage() {
   const router = useRouter();
   const { profiles, fetchProfiles, deleteProfile, isLoading } = useProfilesStore();
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // For testing, load profiles without authentication
     fetchProfiles().catch(() => {
-      toast.error('Failed to load profiles');
+      const msg = 'Failed to load profiles. Please make sure you are logged in.';
+      setError(msg);
+      toast.error(msg);
     });
   }, [fetchProfiles]);
 
@@ -61,6 +63,14 @@ export default function ProfilesPage() {
           Create New Profile
         </Button>
       </div>
+
+      {error ? (
+        <Card>
+          <CardContent className="text-sm text-red-700 bg-red-50 border border-red-200">
+            {error}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {isLoading ? (
         <Card>
